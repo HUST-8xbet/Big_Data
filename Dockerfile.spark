@@ -1,0 +1,35 @@
+# Sử dụng bản Spark 3.5.0 chính chủ của Apache
+FROM apache/spark:3.5.0
+
+USER root
+
+# Cài đặt các thư viện Python cần thiết
+RUN apt-get update && apt-get install -y curl python3-pip \
+    && pip3 install --no-cache-dir --upgrade pip \
+    && pip3 install --no-cache-dir pyyaml requests python-dotenv influxdb-client psycopg2-binary pandas
+
+# =======================================================
+# SỬA ĐÚNG ĐƯỜNG DẪN CỦA APACHE (KHÔNG CÒN CHỮ BITNAMI NỮA)
+# =======================================================
+ENV SPARK_JARS_DIR=/opt/spark/jars
+
+# ==========================================
+# TẢI CÁC FILE JAR (MẮT THẦN)
+# ==========================================
+
+# 1. Kafka Connectors
+RUN curl -L -o $SPARK_JARS_DIR/spark-sql-kafka-0-10_2.12-3.5.0.jar https://repo1.maven.org/maven2/org/apache/spark/spark-sql-kafka-0-10_2.12/3.5.0/spark-sql-kafka-0-10_2.12-3.5.0.jar \
+    && curl -L -o $SPARK_JARS_DIR/kafka-clients-3.5.0.jar https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/3.5.0/kafka-clients-3.5.0.jar \
+    && curl -L -o $SPARK_JARS_DIR/commons-pool2-2.11.1.jar https://repo1.maven.org/maven2/org/apache/commons/commons-pool2/2.11.1/commons-pool2-2.11.1.jar \
+    && curl -L -o $SPARK_JARS_DIR/spark-token-provider-kafka-0-10_2.12-3.5.0.jar https://repo1.maven.org/maven2/org/apache/spark/spark-token-provider-kafka-0-10_2.12/3.5.0/spark-token-provider-kafka-0-10_2.12-3.5.0.jar
+
+# 2. PostgreSQL Connector
+RUN curl -L -o $SPARK_JARS_DIR/postgresql-42.6.0.jar https://repo1.maven.org/maven2/org/postgresql/postgresql/42.6.0/postgresql-42.6.0.jar
+
+# 3. MinIO/S3 Connectors
+RUN curl -L -o $SPARK_JARS_DIR/hadoop-aws-3.3.4.jar https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.4/hadoop-aws-3.3.4.jar \
+    && curl -L -o $SPARK_JARS_DIR/aws-java-sdk-bundle-1.12.262.jar https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar
+
+# Chuyển về user spark mặc định của Apache
+USER spark
+WORKDIR /opt/spark

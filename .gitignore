@@ -1,0 +1,14 @@
+# Bỏ qua môi trường ảo Python
+venv/
+env/
+__pycache__/
+*.pyc
+
+# Bỏ qua dữ liệu của các container (nếu có mount ra ngoài)
+postgres_data/
+minio_data/
+kafka_data/
+influxdb_data/
+
+# Bỏ qua các file cấu hình nhạy cảm (nếu sau này có)
+.env
