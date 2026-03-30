@@ -12,3 +12,23 @@ influxdb_data/
 
 # Bỏ qua các file cấu hình nhạy cảm (nếu sau này có)
 .env
+
+# Bỏ qua thư viện của Node.js
+frontend/node_modules/
+node_modules/
+
+# Bỏ qua thư mục build khi build React để deploy
+frontend/build/
+frontend/dist/
+
+# Bỏ qua các file log của npm/yarn
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Bỏ qua các file ẩn do macOS tự sinh ra
+.DS_Store
+**/.DS_Store
+
+# Bỏ qua cấu hình cá nhân của VS Code
+.vscode/

@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+pydantic #kiểm tra dữ liệu đầu vào 
+python-dotenv #bảo mật thông tin nhạy cảm 
+websockets #real-time 
+influxdb-client
+pymongo
