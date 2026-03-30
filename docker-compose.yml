@@ -219,7 +219,7 @@ services:
     command: >
       /opt/spark/bin/spark-submit
       --master spark://spark-master:7077
-      /opt/project/spark_scripts/speed_layer.py
+      /opt/project/spark_scripts/speed_layer_influx.py
     volumes:
       - ./:/opt/project
     environment:
