@@ -1,6 +1,14 @@
+import sys 
+import os
+
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json, struct
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType
+
+# 1. Nạp module từ thư mục cha
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config.settings import KAFKA_BROKER, KAFKA_TOPIC_PRICES, KAFKA_TOPIC_ALERTS, PG_URL, PG_USER, PG_PASSWORD, PG_DRIVER
+from utils.schemas import BINANCE_SCHEMA
+# [CHANGED] SCHEMA được định nghĩa trong utils/schemas.py để tái sử dụng cho nhiều job khác nhau
 
 # 1. Khởi tạo Spark Session (Kèm theo Driver để kết nối PostgreSQL)
 spark = SparkSession.builder \
@@ -11,23 +19,16 @@ spark = SparkSession.builder \
 spark.sparkContext.setLogLevel("WARN")
 print("🔥 [SPARK] Đã bật Radar Cảnh Báo Động! Đang liên tục quét luật từ PostgreSQL...")
 
-# 2. Schema dữ liệu Live từ Kafka
-schema = StructType([
-    StructField("symbol", StringType(), True),
-    StructField("price", DoubleType(), True),
-    StructField("volume", DoubleType(), True),
-    StructField("timestamp", LongType(), True)
-])
 
 # 3. Đọc dữ liệu Real-time từ Kafka
 raw_stream = spark.readStream \
     .format("kafka") \
-    .option("kafka.bootstrap.servers", "kafka:29092") \
-    .option("subscribe", "binance_live_prices") \
+    .option("kafka.bootstrap.servers", KAFKA_BROKER) \
+    .option("subscribe", KAFKA_TOPIC_PRICES) \
     .load()
 
 parsed_stream = raw_stream.selectExpr("CAST(value AS STRING) as json_string") \
-    .select(from_json(col("json_string"), schema).alias("data")).select("data.*")
+    .select(from_json(col("json_string"), BINANCE_SCHEMA).alias("data")).select("data.*")
 
 # ==========================================
 # 4. HÀM XỬ LÝ LÔ DỮ LIỆU ĐỘNG (Stream-Static Join)
@@ -42,11 +43,11 @@ def process_dynamic_alerts(batch_df, batch_id):
         # Lưu ý: Sửa user/password/db_name cho khớp với file docker-compose của bạn
         rules_df = spark.read \
             .format("jdbc") \
-            .option("url", "jdbc:postgresql://postgres:5432/crypto_db") \
+            .option("url", PG_URL) \
             .option("dbtable", "user_alerts") \
-            .option("user", "admin") \
-            .option("password", "password123") \
-            .option("driver", "org.postgresql.Driver") \
+            .option("user", PG_USER) \
+            .option("password", PG_PASSWORD) \
+            .option("driver", PG_DRIVER) \
             .load()
 
         # BƯỚC B: Chập dữ liệu (Join) - Tìm những luật có chung symbol với giá Live
@@ -66,7 +67,8 @@ def process_dynamic_alerts(batch_df, batch_id):
         # BƯỚC D: Đóng gói và gửi vào Kafka nếu có người khớp lệnh
         if not matched_alerts.isEmpty():
             alert_count = matched_alerts.count()
-            print(f"🚨 PHÁT HIỆN {alert_count} CẢNH BÁO KHỚP LỆNH! (Lô {batch_id}) - Đang đẩy vào Kafka...")
+            print(f"
+             PHÁT HIỆN {alert_count} CẢNH BÁO KHỚP LỆNH! (Lô {batch_id}) - Đang đẩy vào Kafka...")
             
             # Ép kiểu thành JSON để Kafka hiểu được
             kafka_output = matched_alerts.selectExpr(
@@ -77,8 +79,8 @@ def process_dynamic_alerts(batch_df, batch_id):
             # Bơm vào Topic user_alerts_topic
             kafka_output.write \
                 .format("kafka") \
-                .option("kafka.bootstrap.servers", "kafka:29092") \
-                .option("topic", "user_alerts_topic") \
+                .option("kafka.bootstrap.servers", KAFKA_BROKER) \
+                .option("topic", KAFKA_TOPIC_ALERTS) \
                 .save()
             
     except Exception as e:
