@@ -67,8 +67,7 @@ def process_dynamic_alerts(batch_df, batch_id):
         # BƯỚC D: Đóng gói và gửi vào Kafka nếu có người khớp lệnh
         if not matched_alerts.isEmpty():
             alert_count = matched_alerts.count()
-            print(f"
-             PHÁT HIỆN {alert_count} CẢNH BÁO KHỚP LỆNH! (Lô {batch_id}) - Đang đẩy vào Kafka...")
+            print(f"PHÁT HIỆN {alert_count} CẢNH BÁO KHỚP LỆNH! (Lô {batch_id}) - Đang đẩy vào Kafka...")
             
             # Ép kiểu thành JSON để Kafka hiểu được
             kafka_output = matched_alerts.selectExpr(
