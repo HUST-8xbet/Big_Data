@@ -1,5 +1,5 @@
 # Kafka Config
-KAFKA_BROKER = "localhost:29092"
+KAFKA_BROKER = "kafka:29092"
 KAFKA_TOPIC_PRICES = "binance_live_prices"
 KAFKA_TOPIC_ALERTS = "user_alerts_topic"
 

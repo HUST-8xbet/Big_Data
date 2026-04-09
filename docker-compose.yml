@@ -55,12 +55,13 @@ services:
     command: >
       bash -c "
       echo 'Đang khởi tạo các Topic cho dự án...' &&
-      kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic binance_live_prices --partitions 3 --replication-factor 1 &&
-      kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic user_alerts_topic --partitions 1 --replication-factor 1 &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic binance_live_prices --partitions 3 --replication-factor 1 &&
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic user_alerts_topic --partitions 1 --replication-factor 1 &&
       echo 'Tạo Topic thành công!'
       "
     networks:
       - crypto-network
+
 
   # Giao diện xem Kafka siêu mượt
   redpanda-console:
@@ -219,10 +220,60 @@ services:
     command: >
       /opt/spark/bin/spark-submit
       --master spark://spark-master:7077
-      /opt/project/spark_scripts/speed_layer_influx.py
+      --conf "spark.executorEnv.PYTHONPATH=/opt/project/spark_scripts"
+      /opt/project/spark_scripts/jobs/speed_layer_influx.py
+    volumes:
+      - ./:/opt/project
+    environment:
+      - PYTHONPATH=/opt/project/spark_scripts
+    networks:
+      - crypto-network
+
+  # ==========================================
+  # 5. BATCH LAYER — Apache Spark Batch Jobs
+  # ==========================================
+
+  # Job khởi tạo: đọc full Kafka topic → seed PostgreSQL + MinIO (chạy 1 lần)
+  batch-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    container_name: crypto_batch_init
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    command: >
+      /opt/spark/bin/spark-submit
+      --master spark://spark-master:7077
+      /opt/project/spark_scripts/jobs/batch_layer.py
+      --mode batch
     volumes:
       - ./:/opt/project
     environment:
       - PYTHONPATH=/opt/project
     networks:
       - crypto-network
+    restart: "no"
+
+  # Job định kỳ: micro-batch (2 giờ gần nhất), chạy mỗi 10 phút
+  batch-micro:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    container_name: crypto_batch_micro
+    depends_on:
+      spark-master:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.rest.LaunchSubmittedApplication
+    volumes:
+      - ./:/opt/project
+    environment:
+      - PYTHONPATH=/opt/project
+    networks:
+      - crypto-network
+    restart: "no"
