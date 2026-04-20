@@ -14,7 +14,8 @@ const { Title, Text } = Typography;
 const { Search } = Input;
 
 // ── API ──────────────────────────────────────────────────────────────────────
-const API = 'http://127.0.0.1:8000';
+// ✅ Dynamic API URL - support cả localhost (dev) và Kubernetes
+const API = process.env.VITE_API_URL || 'http://localhost:8000';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function formatPrice(v) {

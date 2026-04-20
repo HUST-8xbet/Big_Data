@@ -130,7 +130,7 @@ services:
     environment:
       - POSTGRES_USER=admin
       - POSTGRES_PASSWORD=password123
-      - POSTGRES_DB=crypto_db
+      - POSTGRES_DB=cryptodb
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -175,7 +175,7 @@ services:
   spark-master:
     build:
       context: .
-      dockerfile: Dockerfile.spark
+      dockerfile: docker/Dockerfile.spark
     container_name: crypto_spark_master
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
     ports:
@@ -195,7 +195,7 @@ services:
   spark-worker:
     build:
       context: .
-      dockerfile: Dockerfile.spark
+      dockerfile: docker/Dockerfile.spark
     container_name: crypto_spark_worker
     depends_on:
       spark-master:
@@ -210,7 +210,7 @@ services:
   spark-submit:
     build:
       context: .
-      dockerfile: Dockerfile.spark
+      dockerfile: docker/Dockerfile.spark
     container_name: crypto_spark_submit
     depends_on:
       spark-master:
@@ -237,7 +237,7 @@ services:
   batch-init:
     build:
       context: .
-      dockerfile: Dockerfile.spark
+      dockerfile: docker/Dockerfile.spark
     container_name: crypto_batch_init
     depends_on:
       spark-master:
@@ -261,7 +261,7 @@ services:
   batch-micro:
     build:
       context: .
-      dockerfile: Dockerfile.spark
+      dockerfile: docker/Dockerfile.spark
     container_name: crypto_batch_micro
     depends_on:
       spark-master:

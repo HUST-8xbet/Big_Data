@@ -1,25 +1,53 @@
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
+import os
 from datetime import datetime
 from influxdb_client import InfluxDBClient
-from influxdb_client.client.warnings import MissingPivotFunction
+try:
+    from influxdb_client.client.warnings import MissingPivotFunction
+except (ImportError, ModuleNotFoundError):
+    # Nếu không tìm thấy, gán bằng None để tránh sập hệ thống
+    MissingPivotFunction = None
+    print("⚠️  Cảnh báo: Bỏ qua MissingPivotFunction do phiên bản thư viện mới.")
+
 from ml_service import load_ml_model, predict_future_price
 
 app = FastAPI(title="Crypto Price Prediction API")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+# ✅ CORS cho Kubernetes (frontend sẽ có host khác)
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 my_ml_model = load_ml_model()
 
-INFLUX_URL = "http://localhost:8086"
-INFLUX_TOKEN = "super-secret-token-12345"
-INFLUX_ORG = "crypto_org"
-INFLUX_BUCKET = "crypto_prices"
+# ✅ Dùng environment variables - mặc định cho localhost (dev mode)
+INFLUX_URL = os.getenv("INFLUX_URL", "http://localhost:8086")
+INFLUX_TOKEN = os.getenv("INFLUX_TOKEN", "super-secret-token-12345")
+INFLUX_ORG = os.getenv("INFLUX_ORG", "crypto_org")
+INFLUX_BUCKET = os.getenv("INFLUX_BUCKET", "crypto_prices")
 
 import warnings
 warnings.simplefilter("ignore", MissingPivotFunction)
 influx_client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
 query_api = influx_client.query_api()
+
+# ✅ Health Check endpoints cho Kubernetes
+@app.get("/health")
+@app.get("/healthz")
+def health_check():
+    """Liveness probe - kiểm tra app đang chạy"""
+    return {"status": "alive", "service": "crypto-backend"}
+
+@app.get("/ready")
+def readiness_check():
+    """Readiness probe - kiểm tra app sẵn sàng nhận request"""
+    try:
+        # Test kết nối InfluxDB
+        influx_client.ping()
+        return {"status": "ready", "influxdb": "connected"}
+    except Exception as e:
+        return {"status": "not_ready", "error": str(e)}, 503
 
 @app.get("/api/market-summary")
 def get_market_summary():

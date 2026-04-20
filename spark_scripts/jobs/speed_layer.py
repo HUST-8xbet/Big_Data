@@ -1,17 +1,28 @@
+import sys
+import os
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType
 
-# 1. Khởi tạo Spark Session (Bộ não chính)
+# Thêm đường dẫn để import được config.settings
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from config.settings import KAFKA_BROKER, KAFKA_TOPIC_PRICES
+except ImportError:
+    # Fallback cho local nếu chưa có settings
+    KAFKA_BROKER = "localhost:9092"
+    KAFKA_TOPIC_PRICES = "raw_prices"
+
+# 1. Khởi tạo Spark Session
 spark = SparkSession.builder \
     .appName("Crypto_SpeedLayer") \
+    .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0") \
     .getOrCreate()
 
-# Giảm bớt các dòng log rác để màn hình dễ nhìn hơn
 spark.sparkContext.setLogLevel("WARN")
-print("🚀 [SPARK] Đã khởi động thành công! Đang lắng nghe luồng giá từ Kafka...")
+print(f"🚀 [SPEED LAYER] Đang lắng nghe luồng giá từ {KAFKA_TOPIC_PRICES} tại {KAFKA_BROKER}...")
 
-# 2. Định nghĩa cấu trúc khung xương (Schema) cho JSON từ Binance
+# 2. Schema
 schema = StructType([
     StructField("symbol", StringType(), True),
     StructField("price", DoubleType(), True),
@@ -19,22 +30,22 @@ schema = StructType([
     StructField("timestamp", LongType(), True)
 ])
 
-# 3. Đọc luồng dữ liệu liên tục từ Topic Kafka (Streaming)
+# 3. Đọc luồng dữ liệu
 raw_stream = spark \
     .readStream \
     .format("kafka") \
-    .option("kafka.bootstrap.servers", "kafka:29092") \
-    .option("subscribe", "binance_live_prices") \
+    .option("kafka.bootstrap.servers", KAFKA_BROKER) \
+    .option("subscribe", KAFKA_TOPIC_PRICES) \
     .option("startingOffsets", "latest") \
+    .option("failOnDataLoss", "false") \
     .load()
 
-# 4. Gọt giũa dữ liệu (Parse JSON)
-# Kafka lưu dữ liệu dạng nhị phân, ta cần chuyển thành String rồi ốp Schema vào
+# 4. Parse JSON
 parsed_stream = raw_stream.selectExpr("CAST(value AS STRING) as json_string") \
     .select(from_json(col("json_string"), schema).alias("data")) \
     .select("data.*")
 
-# 5. In thẳng ra màn hình Console để Test luồng chạy
+# 5. Output
 query = parsed_stream \
     .writeStream \
     .outputMode("append") \

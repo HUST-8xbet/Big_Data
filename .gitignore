@@ -1,34 +1,101 @@
-# Bỏ qua môi trường ảo Python
+# =============================================================================
+# GITIGNORE CHO DỰ ÁN CRYPTO BIG DATA (LAMBDA ARCHITECTURE)
+# =============================================================================
+
+# --- Python & Môi trường ảo ---
 venv/
 env/
+ENV/
+bin/
+lib/
+include/
+share/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.venv
+.env
+.tox
+.coverage
+.cache
+nosetests.xml
+coverage.xml
+*,cover
+.hypothesis/
+.pytest_cache/
 
-# Bỏ qua dữ liệu của các container (nếu có mount ra ngoài)
+# --- Node.js & Frontend (React) ---
+node_modules/
+frontend/node_modules/
+jspm_packages/
+.npm
+.eslintcache
+.stylelintcache
+.node_repl_history
+frontend/build/
+frontend/dist/
+out/
+.next/
+.vuepress/dist/
+
+# --- Nhật ký & Logs (Từ script start_demo.sh) ---
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+# Cụ thể cho các file log Minh tự tạo
+producer.log
+spark.log
+batch.log
+
+# --- Dữ liệu Database (Nếu mount ra máy MSI) ---
 postgres_data/
 minio_data/
 kafka_data/
 influxdb_data/
+*.db
+*.sqlite3
 
-# Bỏ qua các file cấu hình nhạy cảm (nếu sau này có)
-.env
+# --- Big Data & Spark (Quan trọng) ---
+checkpoint/
+spark-checkpoints/
+checkpointing/
+.spark-stubs/
+metastore_db/
+derby.log
+eventLog/
+.ipynb_checkpoints/
 
-# Bỏ qua thư viện của Node.js
-frontend/node_modules/
-node_modules/
+# --- Machine Learning Models ---
+# Không đưa model nặng lên Git, lưu trên MinIO là chuẩn nhất
+*.h5
+*.pkl
+*.onnx
+*.pb
+*.model
+models/local_cache/
 
-# Bỏ qua thư mục build khi build React để deploy
-frontend/build/
-frontend/dist/
-
-# Bỏ qua các file log của npm/yarn
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Bỏ qua các file ẩn do macOS tự sinh ra
-.DS_Store
-**/.DS_Store
-
-# Bỏ qua cấu hình cá nhân của VS Code
+# --- Cấu hình IDE & Hệ điều hành ---
 .vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# --- Docker & Kubernetes ---
+.docker/
+kubeconfig
+*.crt
+*.key

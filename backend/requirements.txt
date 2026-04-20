@@ -1,7 +1,14 @@
-fastapi
-uvicorn[standard]
-pydantic #kiểm tra dữ liệu đầu vào 
-python-dotenv #bảo mật thông tin nhạy cảm 
-websockets #real-time 
-influxdb-client
-pymongo
+# --- Kết nối Dữ liệu ---
+influxdb-client==1.39.0
+psycopg2-binary==2.9.9
+kafka-python-ng==2.2.3
+
+# --- Web Framework ---
+fastapi==0.109.2
+uvicorn[standard]==0.27.1
+pydantic==2.5.0
+python-dotenv==1.0.1
+
+# --- Công cụ hỗ trợ ---
+requests==2.31.0
+aiofiles==23.2.1

@@ -16,7 +16,7 @@ def apply_ml_prediction(price : float, volumes : float) -> str:
         result = {
             "predicted_price" : round(predicted_price, 4),
             "trend" : trend,
-            "confidence_score" : min(0.99, 0.5 + volume * 0.00001)
+            "confidence_score" : min(0.99, 0.5 + volumes * 0.00001)
         }
 
         return json.dumps(result)

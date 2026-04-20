@@ -15,8 +15,9 @@ const { Title, Text } = Typography;
 const { Option } = Select;
 
 // ── API base ──────────────────────────────────────────────────────────────────
-const API = 'http://127.0.0.1:8000';
-const WS_API = 'ws://127.0.0.1:8000';
+// ✅ Dynamic API URL - support cả localhost (dev) và Kubernetes
+const API = process.env.VITE_API_URL || 'http://localhost:8000';
+const WS_API = (process.env.VITE_WS_URL || 'ws') + '://localhost:8000';
 
 // ── TIME RANGE options (minutes) ─────────────────────────────────────────────
 const TIME_RANGES = [
