@@ -15,7 +15,7 @@ const { Search } = Input;
 
 // ── API ──────────────────────────────────────────────────────────────────────
 // ✅ Dynamic API URL - support cả localhost (dev) và Kubernetes
-const API = process.env.VITE_API_URL || 'http://localhost:8000';
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function formatPrice(v) {

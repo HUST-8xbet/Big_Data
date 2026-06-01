@@ -16,8 +16,8 @@ const { Option } = Select;
 
 // ── API base ──────────────────────────────────────────────────────────────────
 // ✅ Dynamic API URL - support cả localhost (dev) và Kubernetes
-const API = process.env.VITE_API_URL || 'http://localhost:8000';
-const WS_API = (process.env.VITE_WS_URL || 'ws') + '://localhost:8000';
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const WS_API = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
 
 // ── TIME RANGE options (minutes) ─────────────────────────────────────────────
 const TIME_RANGES = [

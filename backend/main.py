@@ -11,7 +11,7 @@ except (ImportError, ModuleNotFoundError):
     MissingPivotFunction = None
     print("⚠️  Cảnh báo: Bỏ qua MissingPivotFunction do phiên bản thư viện mới.")
 
-from ml_service import load_ml_model, predict_future_price
+from backend.ml_service import load_ml_model, predict_future_price
 
 app = FastAPI(title="Crypto Price Prediction API")
 

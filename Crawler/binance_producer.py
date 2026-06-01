@@ -16,7 +16,7 @@ load_dotenv()
 # Trên K8s: kafka:9092 (service name)
 # Local dev: localhost:9092
 KAFKA_BROKER = os.getenv('KAFKA_BROKER', 'localhost:9092')
-KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', 'raw_prices')
+KAFKA_TOPIC = os.getenv('KAFKA_TOPIC', 'binance_live_prices')
 KAFKA_USER = os.getenv('KAFKA_USER', 'admin')
 KAFKA_PASS = os.getenv('KAFKA_PASS', 'admin123')
 
@@ -26,12 +26,24 @@ KAFKA_PASS = os.getenv('KAFKA_PASS', 'admin123')
 s3_client = boto3.client(
     's3',
     endpoint_url=os.getenv('MINIO_ENDPOINT', 'http://localhost:9000'),
-    aws_access_key_id=os.getenv('MINIO_ROOT_USER', os.getenv('MINIO_ACCESS_KEY', 'minioadmin')),
-    aws_secret_access_key=os.getenv('MINIO_ROOT_PASSWORD', os.getenv('MINIO_SECRET_KEY', 'minioadmin123'))
+    aws_access_key_id=os.getenv('MINIO_ROOT_USER', os.getenv('MINIO_ACCESS_KEY', 'admin')),
+    aws_secret_access_key=os.getenv('MINIO_ROOT_PASSWORD', os.getenv('MINIO_SECRET_KEY', 'password123'))
 )
 RAW_BUCKET = 'raw-data'
 
-COINS = ['btcusdt', 'ethusdt', 'solusdt', 'bnbusdt'] # Thu gọn danh sách để test nhanh
+DEFAULT_COINS = [
+    'btcusdt', 'ethusdt', 'bnbusdt', 'solusdt', 'xrpusdt',
+    'adausdt', 'dogeusdt', 'trxusdt', 'linkusdt', 'avaxusdt',
+    'xlmusdt', 'suiusdt', 'tonusdt', 'hbarusdt', 'shibusdt',
+    'ltcusdt', 'dotusdt', 'bchusdt', 'uniusdt', 'nearusdt',
+    'aptusdt', 'aaveusdt', 'etcusdt', 'icpusdt', 'filusdt',
+    'arbusdt', 'opususdt', 'injusdt', 'atomusdt', 'polusdt',
+]
+COINS = [
+    coin.strip().lower()
+    for coin in os.getenv('BINANCE_COINS', ','.join(DEFAULT_COINS)).split(',')
+    if coin.strip()
+]
 streams = '/'.join([f"{coin}@trade" for coin in COINS])
 BINANCE_SOCKET = f"wss://stream.binance.com:9443/stream?streams={streams}"
 

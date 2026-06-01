@@ -2,6 +2,7 @@
 influxdb-client==1.39.0
 psycopg2-binary==2.9.9
 kafka-python-ng==2.2.3
+boto3==1.35.99
 
 # --- Web Framework ---
 fastapi==0.109.2
