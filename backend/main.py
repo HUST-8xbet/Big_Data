@@ -12,6 +12,8 @@ except (ImportError, ModuleNotFoundError):
     print("⚠️  Cảnh báo: Bỏ qua MissingPivotFunction do phiên bản thư viện mới.")
 
 from backend.ml_service import load_ml_model, predict_future_price
+from influxdb_client.client.warnings import MissingPivotFunction
+from ml_service import load_ml_model, predict_future_price, update_price_buffer
 
 app = FastAPI(title="Crypto Price Prediction API")
 
@@ -120,7 +122,8 @@ def get_historical_price(symbol: str):
                 real_price = record.get_value()
                 if real_price is None: continue
                 
-                predicted = predict_future_price(my_ml_model, real_price)
+                update_price_buffer(symbol, real_price)
+                predicted = predict_future_price(my_ml_model, real_price, symbol)
                 history_data.append({
                     "time": time_point.strftime("%H:%M:%S"),
                     "real_price": round(real_price, 2),
@@ -156,7 +159,8 @@ async def websocket_endpoint(websocket: WebSocket, symbol: str):
                     now_str = record.get_time().strftime("%H:%M:%S")
             
             if real_price is not None:
-                predicted = predict_future_price(my_ml_model, real_price)
+                update_price_buffer(symbol, real_price)
+                predicted = predict_future_price(my_ml_model, real_price, symbol)
                 data_packet = {
                     "time": now_str,
                     "real_price": round(real_price, 2),
