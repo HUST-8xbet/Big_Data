@@ -15,8 +15,9 @@ const { Title, Text } = Typography;
 const { Option } = Select;
 
 // ── API base ──────────────────────────────────────────────────────────────────
-const API = 'http://127.0.0.1:8000';
-const WS_API = 'ws://127.0.0.1:8000';
+// ✅ Dynamic API URL - support cả localhost (dev) và Kubernetes
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const WS_API = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
 
 // ── TIME RANGE options (minutes) ─────────────────────────────────────────────
 const TIME_RANGES = [
@@ -191,10 +192,10 @@ export default function CoinDetail() {
 
   // ── 6. Scrub handler (ký hiệu scrubIndex = null → live) ─────────────────
   const isLive = scrubIndex === null;
-  // Trong scrub mode, dùng chartData trực tiếp (không cắt theo timeRange nữa)
+  // Trong scrub mode, dùng window xung quanh scrubIndex (300 điểm trước, điểm đó sau)
   const displayData = isLive
     ? chartData
-    : rawData.slice(Math.max(0, scrubIndex - 300), scrubIndex + 1);
+    : rawData.slice(Math.max(0, scrubIndex - 300), Math.min(rawData.length, scrubIndex + 1));
 
   const currentPrice = isLive
     ? (chartData.length ? chartData[chartData.length - 1].real_price : null)
@@ -302,7 +303,14 @@ export default function CoinDetail() {
                 data={displayData}
                 onMouseMove={(e) => {
                   if (e && e.activeTooltipIndex != null) {
-                    setScrubIndex(e.activeTooltipIndex + (isLive ? Math.max(0, chartData.length - displayData.length) : 0));
+                    // Calculate correct scrubIndex based on actual position in displayData
+                    let newScrubIndex = e.activeTooltipIndex;
+                    if (!isLive && rawData.length > 0) {
+                      // When not live, scrubIndex should be relative to rawData
+                      const startOfDisplay = Math.max(0, rawData.length - displayData.length);
+                      newScrubIndex = startOfDisplay + e.activeTooltipIndex;
+                    }
+                    setScrubIndex(newScrubIndex);
                   }
                 }}
                 onMouseLeave={() => { if (isLive) setScrubIndex(null); }}
@@ -351,14 +359,24 @@ export default function CoinDetail() {
                 />
 
                 {/* Brush — kéo thả để xem quá khứ */}
-                <Brush
-                  dataKey="displayTime"
-                  height={28}
-                  stroke="rgba(255,255,255,0.15)"
-                  fill="#1e2230"
-                  travellerWidth={8}
-                  startIndex={Math.max(0, displayData.length - 120)}
-                />
+                {displayData.length > 120 && (
+                  <Brush
+                    dataKey="displayTime"
+                    height={28}
+                    stroke="rgba(255,255,255,0.15)"
+                    fill="#1e2230"
+                    travellerWidth={8}
+                    startIndex={0}
+                    endIndex={Math.min(119, displayData.length - 1)}
+                    onChange={(state) => {
+                      if (state && state.endIndex !== undefined && !isLive) {
+                        // Khi kéo Brush, tính scrubIndex dựa vào endIndex
+                        const windowStart = Math.max(0, scrubIndex - 300);
+                        setScrubIndex(windowStart + state.endIndex);
+                      }
+                    }}
+                  />
+                )}
               </LineChart>
             </ResponsiveContainer>
           )}

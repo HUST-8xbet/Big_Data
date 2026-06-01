@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Table, Input, Typography, Tag } from 'antd';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Table, Input, InputNumber, Typography, Tag, notification } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import {
   LineChart, Line, ResponsiveContainer, YAxis, ReferenceLine,
@@ -14,7 +14,8 @@ const { Title, Text } = Typography;
 const { Search } = Input;
 
 // ── API ──────────────────────────────────────────────────────────────────────
-const API = 'http://127.0.0.1:8000';
+// ✅ Dynamic API URL - support cả localhost (dev) và Kubernetes
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function formatPrice(v) {
@@ -111,23 +112,77 @@ function MarketStats({ data }) {
 // ── Home ──────────────────────────────────────────────────────────────────────
 export default function Home() {
   const [data,       setData]       = useState([]);
+  const prevDataRef  = useRef({});
   const [loading,    setLoading]    = useState(true);
   const [searchText, setSearchText] = useState('');
+  const [minPrice,   setMinPrice]   = useState(null);
+  const [maxPrice,   setMaxPrice]   = useState(null);
   const navigate = useNavigate();
 
+  // ── Fetch initial data ──
   useEffect(() => {
     fetch(`${API}/api/market-summary`)
       .then(r => r.json())
-      .then(json => { setData(json); setLoading(false); })
+      .then(json => { 
+        setData(json); 
+        setLoading(false);
+        // Initialize prevData
+        prevDataRef.current = {};
+        json.forEach(coin => {
+          prevDataRef.current[coin.id] = coin.price_change_percentage_24h;
+        });
+      })
       .catch(() => setLoading(false));
   }, []);
 
+  // ── Fetch updated data every 10 seconds and check for drops ──
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetch(`${API}/api/market-summary`)
+        .then(r => r.json())
+        .then(json => {
+          json.forEach(coin => {
+            const prevChange = prevDataRef.current[coin.id];
+            const currentChange = coin.price_change_percentage_24h;
+            
+            // Check if change dropped (became more negative or increased less)
+            if (prevChange !== undefined && currentChange < prevChange) {
+              notification.warning({
+                message: `${coin.symbol.toUpperCase()} - Giá đang giảm`,
+                description: `Biến động: ${fmtPct(prevChange)} → ${fmtPct(currentChange)}`,
+                placement: 'topRight',
+                duration: 4,
+              });
+            }
+          });
+          
+          // Update data and prevDataRef
+          setData(json);
+          prevDataRef.current = {};
+          json.forEach(coin => {
+            prevDataRef.current[coin.id] = coin.price_change_percentage_24h;
+          });
+        })
+        .catch(() => {});
+    }, 10000); // Update every 10 seconds
+    
+    return () => clearInterval(interval);
+  }, []);
+
   const filtered = useMemo(() =>
-    data.filter(coin =>
-      coin.name.toLowerCase().includes(searchText.toLowerCase()) ||
-      coin.symbol.toLowerCase().includes(searchText.toLowerCase())
-    ),
-    [data, searchText]
+    data.filter(coin => {
+      // Filter by search text
+      const matchesSearch = coin.name.toLowerCase().includes(searchText.toLowerCase()) ||
+                            coin.symbol.toLowerCase().includes(searchText.toLowerCase());
+      
+      // Filter by price range
+      const price = coin.current_price;
+      const aboveMin = minPrice === null || price >= minPrice;
+      const belowMax = maxPrice === null || price <= maxPrice;
+      
+      return matchesSearch && aboveMin && belowMax;
+    }),
+    [data, searchText, minPrice, maxPrice]
   );
 
   const columns = [
@@ -196,12 +251,12 @@ export default function Home() {
       {/* ── Header ── */}
       <header className="home-header">
         <div className="header-brand">
-          <ThunderboltOutlined className="brand-icon" />
+          <ThunderboltOutlined className="brand-icon" style={{ color: '#ffd700' }} />
           <Title level={2} style={{ margin: 0, color: 'var(--text-h)' }}>
             CryptoWatch
           </Title>
         </div>
-        <Tag icon={<ThunderboltOutlined />} style={{ borderRadius: 20 }}>
+        <Tag icon={<ThunderboltOutlined style={{ color: '#ffd700' }} />} color="red" style={{ borderRadius: 20, fontSize: '28px', fontWeight: 'bold' }}>
           Live Data
         </Tag>
       </header>
@@ -215,13 +270,30 @@ export default function Home() {
           <Text strong style={{ color: 'var(--text-h)', fontSize: 16 }}>
             Bảng giá thị trường
           </Text>
-          <Search
-            placeholder="Tìm coin (BTC, ETH, SOL...)"
-            allowClear
-            prefix={<SearchOutlined style={{ color: '#9ca3af' }} />}
-            onChange={e => setSearchText(e.target.value)}
-            className="search-input"
-          />
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <Search
+              placeholder="Tìm coin (BTC, ETH, SOL...)"
+              allowClear
+              prefix={<SearchOutlined style={{ color: '#9ca3af' }} />}
+              onChange={e => setSearchText(e.target.value)}
+              className="search-input"
+            />
+            <InputNumber
+              placeholder="Giá tối thiểu"
+              min={0}
+              value={minPrice}
+              onChange={setMinPrice}
+              style={{ width: 140 }}
+            />
+            <span style={{ color: '#6b7280' }}>—</span>
+            <InputNumber
+              placeholder="Giá tối đa"
+              min={0}
+              value={maxPrice}
+              onChange={setMaxPrice}
+              style={{ width: 140 }}
+            />
+          </div>
         </div>
 
         <Table

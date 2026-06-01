@@ -175,6 +175,27 @@
 .search-input .ant-input-prefix { margin-right: 8px; }
 .search-input .ant-input-clear-icon { color: #6b7280; }
 
+/* ── Price Range Filter ────────────────────────────────────── */
+.ant-input-number {
+  background: rgba(255,255,255,0.06) !important;
+  border-color: rgba(255,255,255,0.1) !important;
+  border-radius: 8px !important;
+}
+.ant-input-number .ant-input-number-input {
+  background: rgba(255,255,255,0.06) !important;
+  color: #e8e8e8 !important;
+  border: none !important;
+}
+.ant-input-number .ant-input-number-input::placeholder { color: #4b5563 !important; }
+.ant-input-number:hover {
+  border-color: rgba(0,227,150,0.4) !important;
+}
+.ant-input-number-focused {
+  border-color: rgba(0,227,150,0.4) !important;
+  box-shadow: 0 0 0 2px rgba(0,227,150,0.08) !important;
+}
+.ant-input-number-handler { color: #6b7280 !important; }
+
 /* ── Pagination ───────────────────────────────────────────────── */
 .table-section .ant-pagination-item {
   background: rgba(255,255,255,0.05) !important;
