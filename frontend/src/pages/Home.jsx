@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Table, Input, Typography, Tag } from 'antd';
+import { Table, Input, InputNumber, Typography, Tag } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import {
   LineChart, Line, ResponsiveContainer, YAxis, ReferenceLine,
@@ -114,6 +114,8 @@ export default function Home() {
   const [data,       setData]       = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [searchText, setSearchText] = useState('');
+  const [minPrice,   setMinPrice]   = useState(null);
+  const [maxPrice,   setMaxPrice]   = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -124,11 +126,19 @@ export default function Home() {
   }, []);
 
   const filtered = useMemo(() =>
-    data.filter(coin =>
-      coin.name.toLowerCase().includes(searchText.toLowerCase()) ||
-      coin.symbol.toLowerCase().includes(searchText.toLowerCase())
-    ),
-    [data, searchText]
+    data.filter(coin => {
+      // Filter by search text
+      const matchesSearch = coin.name.toLowerCase().includes(searchText.toLowerCase()) ||
+                            coin.symbol.toLowerCase().includes(searchText.toLowerCase());
+      
+      // Filter by price range
+      const price = coin.current_price;
+      const aboveMin = minPrice === null || price >= minPrice;
+      const belowMax = maxPrice === null || price <= maxPrice;
+      
+      return matchesSearch && aboveMin && belowMax;
+    }),
+    [data, searchText, minPrice, maxPrice]
   );
 
   const columns = [
@@ -197,12 +207,12 @@ export default function Home() {
       {/* ── Header ── */}
       <header className="home-header">
         <div className="header-brand">
-          <ThunderboltOutlined className="brand-icon" />
+          <ThunderboltOutlined className="brand-icon" style={{ color: '#ffd700' }} />
           <Title level={2} style={{ margin: 0, color: 'var(--text-h)' }}>
             CryptoWatch
           </Title>
         </div>
-        <Tag icon={<ThunderboltOutlined />} color="red" style={{ borderRadius: 20 }}>
+        <Tag icon={<ThunderboltOutlined style={{ color: '#ffd700' }} />} color="red" style={{ borderRadius: 20, fontSize: '28px', fontWeight: 'bold' }}>
           Live Data
         </Tag>
       </header>
@@ -216,13 +226,30 @@ export default function Home() {
           <Text strong style={{ color: 'var(--text-h)', fontSize: 16 }}>
             Bảng giá thị trường
           </Text>
-          <Search
-            placeholder="Tìm coin (BTC, ETH, SOL...)"
-            allowClear
-            prefix={<SearchOutlined style={{ color: '#9ca3af' }} />}
-            onChange={e => setSearchText(e.target.value)}
-            className="search-input"
-          />
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <Search
+              placeholder="Tìm coin (BTC, ETH, SOL...)"
+              allowClear
+              prefix={<SearchOutlined style={{ color: '#9ca3af' }} />}
+              onChange={e => setSearchText(e.target.value)}
+              className="search-input"
+            />
+            <InputNumber
+              placeholder="Giá tối thiểu"
+              min={0}
+              value={minPrice}
+              onChange={setMinPrice}
+              style={{ width: 140 }}
+            />
+            <span style={{ color: '#6b7280' }}>—</span>
+            <InputNumber
+              placeholder="Giá tối đa"
+              min={0}
+              value={maxPrice}
+              onChange={setMaxPrice}
+              style={{ width: 140 }}
+            />
+          </div>
         </div>
 
         <Table
