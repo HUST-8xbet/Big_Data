@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Table, Input, InputNumber, Typography, Tag } from 'antd';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Table, Input, InputNumber, Typography, Tag, notification } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import {
   LineChart, Line, ResponsiveContainer, YAxis, ReferenceLine,
@@ -112,17 +112,61 @@ function MarketStats({ data }) {
 // ── Home ──────────────────────────────────────────────────────────────────────
 export default function Home() {
   const [data,       setData]       = useState([]);
+  const prevDataRef  = useRef({});
   const [loading,    setLoading]    = useState(true);
   const [searchText, setSearchText] = useState('');
   const [minPrice,   setMinPrice]   = useState(null);
   const [maxPrice,   setMaxPrice]   = useState(null);
   const navigate = useNavigate();
 
+  // ── Fetch initial data ──
   useEffect(() => {
     fetch(`${API}/api/market-summary`)
       .then(r => r.json())
-      .then(json => { setData(json); setLoading(false); })
+      .then(json => { 
+        setData(json); 
+        setLoading(false);
+        // Initialize prevData
+        prevDataRef.current = {};
+        json.forEach(coin => {
+          prevDataRef.current[coin.id] = coin.price_change_percentage_24h;
+        });
+      })
       .catch(() => setLoading(false));
+  }, []);
+
+  // ── Fetch updated data every 10 seconds and check for drops ──
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetch(`${API}/api/market-summary`)
+        .then(r => r.json())
+        .then(json => {
+          json.forEach(coin => {
+            const prevChange = prevDataRef.current[coin.id];
+            const currentChange = coin.price_change_percentage_24h;
+            
+            // Check if change dropped (became more negative or increased less)
+            if (prevChange !== undefined && currentChange < prevChange) {
+              notification.warning({
+                message: `${coin.symbol.toUpperCase()} - Giá đang giảm`,
+                description: `Biến động: ${fmtPct(prevChange)} → ${fmtPct(currentChange)}`,
+                placement: 'topRight',
+                duration: 4,
+              });
+            }
+          });
+          
+          // Update data and prevDataRef
+          setData(json);
+          prevDataRef.current = {};
+          json.forEach(coin => {
+            prevDataRef.current[coin.id] = coin.price_change_percentage_24h;
+          });
+        })
+        .catch(() => {});
+    }, 10000); // Update every 10 seconds
+    
+    return () => clearInterval(interval);
   }, []);
 
   const filtered = useMemo(() =>
