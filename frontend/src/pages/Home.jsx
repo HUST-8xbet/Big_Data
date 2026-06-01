@@ -202,7 +202,7 @@ export default function Home() {
             CryptoWatch
           </Title>
         </div>
-        <Tag icon={<ThunderboltOutlined />} style={{ borderRadius: 20 }}>
+        <Tag icon={<ThunderboltOutlined />} color="red" style={{ borderRadius: 20 }}>
           Live Data
         </Tag>
       </header>

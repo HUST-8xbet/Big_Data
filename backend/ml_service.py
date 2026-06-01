@@ -1,7 +1,14 @@
 # File: backend/ml_service.py
 import random
 
-
+def load_ml_model():
+    """
+    Hàm này chạy 1 lần khi khởi động Server.
+    Sau này bạn ML sẽ viết code load file model thật (VD: model.pkl, file .h5) ở đây.
+    """
+    print("Đang tải mô hình Machine Learning...")
+    # model = joblib.load('path/to/model.pkl')
+    return "Mô hình đã sẵn sàng"
 
 def predict_future_price(model, current_price):
     """
