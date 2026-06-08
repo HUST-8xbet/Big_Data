@@ -84,8 +84,8 @@ export default function CoinDetail() {
   const [loading,   setLoading]   = useState(true);
   const [timeRange, setTimeRange] = useState(60);    // phút
 
-  // Scrub / pan state
-  const [scrubIndex, setScrubIndex] = useState(null); // index đang xem (null = live)
+  // History mode: user đã kéo Brush ra khỏi live
+  const [isHistoryMode, setIsHistoryMode] = useState(false);
 
   // WebSocket
   const [wsConnected, setWsConnected] = useState(false);
@@ -102,17 +102,16 @@ export default function CoinDetail() {
   }, []);
 
   // ── 2. Fetch lịch sử ──────────────────────────────────────────────────────
-  const fetchHistory = useCallback((sym) => {
+  const fetchHistory = useCallback((sym, minutes) => {
     setLoading(true);
     setRawData([]);
     setChartData([]);
-    setScrubIndex(null);
+    setIsHistoryMode(false);
 
-    fetch(`${API}/api/historical-price/${sym}`)
+    fetch(`${API}/api/historical-price/${sym}?minutes=${minutes}`)
       .then(r => r.json())
       .then(data => {
         if (!data.length) { setLoading(false); return; }
-        // Chuyển "HH:MM:SS" → timestamp để sort được
         const enriched = data.map((d, i) => ({
           ...d,
           _index: i,
@@ -127,7 +126,7 @@ export default function CoinDetail() {
       });
   }, []);
 
-  useEffect(() => { fetchHistory(coin); }, [coin, fetchHistory]);
+  useEffect(() => { fetchHistory(coin, timeRange); }, [coin, timeRange, fetchHistory]);
 
   // ── 3. WebSocket ──────────────────────────────────────────────────────────
   const connectWs = useCallback((sym) => {
@@ -174,15 +173,10 @@ export default function CoinDetail() {
     };
   }, [coin, connectWs]);
 
-  // ── 4. Lọc chartData theo timeRange ──────────────────────────────────────
+  // ── 4. rawData → chartData (API đã trả đúng range, không cần slice) ──────
   useEffect(() => {
-    if (!rawData.length) { setChartData([]); return; }
-    const points = timeRange * 60 / 2; // mỗi ~2s 1 điểm
-    const sliced = rawData.slice(-points);
-    setChartData(sliced);
-    // Khi đổi range → thoát scrub, về live
-    setScrubIndex(null);
-  }, [rawData, timeRange]);
+    setChartData(rawData);
+  }, [rawData]);
 
   // ── 5. Stats cards ───────────────────────────────────────────────────────
   const stats = calcChange(chartData);
@@ -190,16 +184,14 @@ export default function CoinDetail() {
   const high = prices.length ? Math.max(...prices) : null;
   const low  = prices.length ? Math.min(...prices) : null;
 
-  // ── 6. Scrub handler (ký hiệu scrubIndex = null → live) ─────────────────
-  const isLive = scrubIndex === null;
-  // Trong scrub mode, dùng window xung quanh scrubIndex (300 điểm trước, điểm đó sau)
-  const displayData = isLive
-    ? chartData
-    : rawData.slice(Math.max(0, scrubIndex - 300), Math.min(rawData.length, scrubIndex + 1));
+  // ── 6. Display data — Brush tự xử lý zoom, không cần slice thủ công ───────
+  const isLive = !isHistoryMode;
+  const displayData = chartData;
+  const currentPrice = chartData.length ? chartData[chartData.length - 1].real_price : null;
 
-  const currentPrice = isLive
-    ? (chartData.length ? chartData[chartData.length - 1].real_price : null)
-    : (scrubIndex != null && displayData.length ? displayData[displayData.length - 1].real_price : null);
+  // Brush window: mặc định hiện 120 điểm cuối, follow live khi không ở history mode
+  const brushStartIndex = Math.max(0, displayData.length - 120);
+  const brushEndIndex   = displayData.length > 0 ? displayData.length - 1 : 0;
 
   return (
     <div className="detail-page">
@@ -279,7 +271,7 @@ export default function CoinDetail() {
           </div>
 
           {!isLive && (
-            <button className="btn-live-hint" onClick={() => setScrubIndex(null)}>
+            <button className="btn-live-hint" onClick={() => setIsHistoryMode(false)}>
               ← Quay về Live
             </button>
           )}
@@ -299,22 +291,7 @@ export default function CoinDetail() {
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={displayData}
-                onMouseMove={(e) => {
-                  if (e && e.activeTooltipIndex != null) {
-                    // Calculate correct scrubIndex based on actual position in displayData
-                    let newScrubIndex = e.activeTooltipIndex;
-                    if (!isLive && rawData.length > 0) {
-                      // When not live, scrubIndex should be relative to rawData
-                      const startOfDisplay = Math.max(0, rawData.length - displayData.length);
-                      newScrubIndex = startOfDisplay + e.activeTooltipIndex;
-                    }
-                    setScrubIndex(newScrubIndex);
-                  }
-                }}
-                onMouseLeave={() => { if (isLive) setScrubIndex(null); }}
-              >
+              <LineChart data={displayData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                 <XAxis
                   dataKey="displayTime"
@@ -358,22 +335,21 @@ export default function CoinDetail() {
                   activeDot={{ r: 4, fill: '#ff6b6b', strokeWidth: 0 }}
                 />
 
-                {/* Brush — kéo thả để xem quá khứ */}
-                {displayData.length > 120 && (
+                {/* Brush — kéo thả để xem quá khứ, Recharts tự xử lý zoom */}
+                {displayData.length > 10 && (
                   <Brush
                     dataKey="displayTime"
                     height={28}
                     stroke="rgba(255,255,255,0.15)"
                     fill="#1e2230"
                     travellerWidth={8}
-                    startIndex={0}
-                    endIndex={Math.min(119, displayData.length - 1)}
+                    startIndex={isHistoryMode ? undefined : brushStartIndex}
+                    endIndex={isHistoryMode ? undefined : brushEndIndex}
                     onChange={(state) => {
-                      if (state && state.endIndex !== undefined && !isLive) {
-                        // Khi kéo Brush, tính scrubIndex dựa vào endIndex
-                        const windowStart = Math.max(0, scrubIndex - 300);
-                        setScrubIndex(windowStart + state.endIndex);
-                      }
+                      if (!state) return;
+                      // Nếu end chưa đến cuối → history mode
+                      const atEnd = state.endIndex >= displayData.length - 1;
+                      setIsHistoryMode(!atEnd);
                     }}
                   />
                 )}

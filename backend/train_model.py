@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script để huấn luyện mô hình XGBoost trên dữ liệu lịch sử
+Script để huấn luyện mô hình LSTM trên dữ liệu lịch sử
 Chạy: python train_model.py
 """
 
@@ -65,7 +65,7 @@ def fetch_all_historical_data():
 
 def main():
     print("=" * 60)
-    print("🤖 XGBoost Model Training Script")
+    print("🤖 LSTM Model Training Script")
     print("=" * 60)
     
     # Lấy dữ liệu
@@ -76,9 +76,9 @@ def main():
         return
     
     # Huấn luyện mô hình
-    print("\n🔧 Đang huấn luyện mô hình XGBoost...")
+    print("\n🔧 Đang huấn luyện mô hình LSTM...")
     train_model_on_historical_data(historical_data)
-    
+
     print("\n" + "=" * 60)
     print("✅ Huấn luyện hoàn tất! Bạn có thể khởi động backend ngay.")
     print("=" * 60)

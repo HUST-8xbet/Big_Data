@@ -1,210 +1,163 @@
-# File: backend/ml_service.py
 import numpy as np
-import pandas as pd
-from xgboost import XGBRegressor
-import joblib
-import os
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
 from collections import deque
+import os
 
-# Global model và price history buffer
+WINDOW_SIZE = 60   # 60 phút lịch sử làm input
+HIDDEN_SIZE = 64
+NUM_LAYERS = 2
+
 ml_model = None
-price_buffer = {}  # {symbol: deque(prices)}
-MAX_BUFFER_SIZE = 120  # Lưu 120 điểm (2 tiếng với interval 1 phút)
+price_buffer = {}
+MAX_BUFFER_SIZE = 120
 
-def create_features(price_history):
+
+class LSTMModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.lstm = nn.LSTM(
+            input_size=1,
+            hidden_size=HIDDEN_SIZE,
+            num_layers=NUM_LAYERS,
+            batch_first=True,
+            dropout=0.2,
+        )
+        self.fc = nn.Linear(HIDDEN_SIZE, 1)
+
+    def forward(self, x):
+        out, _ = self.lstm(x)
+        return self.fc(out[:, -1, :])  # lấy output của timestep cuối
+
+
+def _to_returns(prices):
+    """Chuyển mảng giá sang % thay đổi (returns), giải quyết vấn đề scale giữa các coin."""
+    prices = np.array(prices, dtype=float)
+    returns = np.diff(prices) / prices[:-1]
+    return returns
+
+
+def _create_sequences(prices):
+    """Tạo cặp (X, y) từ mảng giá.
+    X: chuỗi WINDOW_SIZE returns liên tiếp
+    y: return tiếp theo cần dự đoán
     """
-    Feature Engineering: tạo các đặc trưng từ lịch sử giá
-    - MA5, MA10, MA20: Moving averages
-    - Momentum: Tốc độ thay đổi
-    - Volatility: Độ biến động
-    - Trend: Xu hướng
-    - RSI: Relative Strength Index
-    """
-    if len(price_history) < 20:
-        return None
-    
-    prices = np.array(price_history, dtype=float)
-    
-    # Moving Averages
-    ma5 = np.mean(prices[-5:])
-    ma10 = np.mean(prices[-10:])
-    ma20 = np.mean(prices[-20:])
-    
-    # Momentum (tốc độ thay đổi)
-    momentum = prices[-1] - prices[-5] if len(prices) >= 5 else 0
-    
-    # Volatility (độ lệch chuẩn)
-    volatility = np.std(prices[-20:]) if len(prices) >= 20 else 0
-    
-    # Trend (hệ số tuyến tính)
-    x = np.arange(len(prices[-20:]))
-    y = prices[-20:]
-    trend = np.polyfit(x, y, 1)[0]  # Slope
-    
-    # RSI (Relative Strength Index)
-    deltas = np.diff(prices[-14:]) if len(prices) >= 14 else np.array([0])
-    gains = np.sum(deltas[deltas > 0]) if len(deltas) > 0 else 0
-    losses = np.abs(np.sum(deltas[deltas < 0])) if len(deltas) > 0 else 0
-    rs = gains / losses if losses > 0 else 0
-    rsi = 100 - (100 / (1 + rs)) if rs >= 0 else 50
-    
-    # Price ratio (giá hiện tại so với MA20)
-    price_ratio = prices[-1] / ma20 if ma20 > 0 else 1
-    
-    features = {
-        'price': prices[-1],
-        'ma5': ma5,
-        'ma10': ma10,
-        'ma20': ma20,
-        'momentum': momentum,
-        'volatility': volatility,
-        'trend': trend,
-        'rsi': rsi,
-        'price_ratio': price_ratio,
-    }
-    
-    return features
+    returns = _to_returns(prices)
+    X, y = [], []
+    for i in range(len(returns) - WINDOW_SIZE):
+        X.append(returns[i : i + WINDOW_SIZE])
+        y.append(returns[i + WINDOW_SIZE])
+    return np.array(X, dtype=np.float32), np.array(y, dtype=np.float32)
+
 
 def train_model_on_historical_data(historical_prices):
-    """
-    Training: Huấn luyện mô hình XGBoost trên dữ liệu lịch sử
-    historical_prices: dict {symbol: [list of prices]}
-    """
     global ml_model
-    
-    X = []
-    y = []
-    
+
+    all_X, all_y = [], []
     for symbol, prices in historical_prices.items():
-        prices = np.array(prices, dtype=float)
-        
-        # Tạo training samples: dùng 20 điểm trước để dự đoán điểm kế tiếp
-        for i in range(20, len(prices) - 1):
-            features = create_features(prices[:i+1].tolist())
-            if features is not None:
-                X.append([
-                    features['price'],
-                    features['ma5'],
-                    features['ma10'],
-                    features['ma20'],
-                    features['momentum'],
-                    features['volatility'],
-                    features['trend'],
-                    features['rsi'],
-                    features['price_ratio'],
-                ])
-                # Target: đoán giá tiếp theo
-                y.append(prices[i+1])
-    
-    if len(X) > 0:
-        X = np.array(X)
-        y = np.array(y)
-        
-        # Training XGBoost
-        ml_model = XGBRegressor(
-            n_estimators=100,
-            max_depth=6,
-            learning_rate=0.1,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            random_state=42,
-            verbosity=1
-        )
-        ml_model.fit(X, y)
-        print(f"✅ Mô hình XGBoost đã được huấn luyện trên {len(X)} samples")
-        
-        # Lưu model
-        joblib.dump(ml_model, 'model.pkl')
-        print("💾 Model đã được lưu vào model.pkl")
-    else:
+        if len(prices) < WINDOW_SIZE + 2:
+            print(f"  ⚠️  {symbol}: không đủ dữ liệu ({len(prices)} điểm), bỏ qua")
+            continue
+        X, y = _create_sequences(prices)
+        all_X.append(X)
+        all_y.append(y)
+
+    if not all_X:
         print("⚠️  Không đủ dữ liệu để huấn luyện mô hình")
+        return
+
+    X = np.concatenate(all_X, axis=0)
+    y = np.concatenate(all_y, axis=0)
+
+    # Train/val split theo thứ tự thời gian (không shuffle toàn bộ)
+    split = int(len(X) * 0.8)
+    X_train, X_val = X[:split], X[split:]
+    y_train, y_val = y[:split], y[split:]
+
+    # Reshape: (batch, seq_len, features=1)
+    X_train_t = torch.from_numpy(X_train).unsqueeze(-1)
+    y_train_t = torch.from_numpy(y_train).unsqueeze(-1)
+    X_val_t   = torch.from_numpy(X_val).unsqueeze(-1)
+    y_val_t   = torch.from_numpy(y_val).unsqueeze(-1)
+
+    loader = DataLoader(TensorDataset(X_train_t, y_train_t), batch_size=64, shuffle=True)
+
+    model = LSTMModel()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    criterion = nn.MSELoss()
+
+    print(f"📐 Training trên {len(X_train)} samples, validation trên {len(X_val)} samples")
+
+    for epoch in range(50):
+        model.train()
+        train_loss = 0.0
+        for X_batch, y_batch in loader:
+            optimizer.zero_grad()
+            loss = criterion(model(X_batch), y_batch)
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item()
+
+        if (epoch + 1) % 10 == 0:
+            model.eval()
+            with torch.no_grad():
+                val_loss = criterion(model(X_val_t), y_val_t).item()
+            print(f"  Epoch {epoch+1:>3}/50 — train: {train_loss/len(loader):.6f}  val: {val_loss:.6f}")
+
+    ml_model = model
+    torch.save(model.state_dict(), "model.pt")
+    print(f"✅ LSTM đã được huấn luyện trên {len(X)} samples, lưu vào model.pt")
+
 
 def load_ml_model():
-    """
-    Load mô hình ML từ file hoặc tạo mới nếu chưa có
-    """
     global ml_model
-    
-    print("🚀 Đang khởi tạo mô hình Machine Learning...")
-    
-    # Cố gắng load model đã lưu trước đó
-    if os.path.exists('model.pkl'):
+    print("🚀 Đang khởi tạo LSTM model...")
+
+    model = LSTMModel()
+
+    if os.path.exists("model.pt"):
         try:
-            ml_model = joblib.load('model.pkl')
-            print("✅ Mô hình XGBoost đã được load từ model.pkl")
+            model.load_state_dict(torch.load("model.pt", map_location="cpu"))
+            model.eval()
+            ml_model = model
+            print("✅ LSTM model đã được load từ model.pt")
             return ml_model
         except Exception as e:
             print(f"⚠️  Lỗi load model: {e}")
-    
-    # Nếu chưa có model, khởi tạo một model mặc định
-    # (Sau này sẽ huấn luyện khi có đủ dữ liệu)
-    ml_model = XGBRegressor(
-        n_estimators=100,
-        max_depth=6,
-        learning_rate=0.1,
-        random_state=42,
-    )
-    
-    print("⚠️  Sử dụng mô hình XGBoost chưa được huấn luyện")
-    print("💡 Mô hình sẽ được huấn luyện khi có đủ dữ liệu lịch sử")
-    
+
+    ml_model = model
+    print("⚠️  Sử dụng LSTM chưa được huấn luyện — hãy chạy train_model.py trước")
     return ml_model
 
+
 def update_price_buffer(symbol, price):
-    """
-    Cập nhật buffer giá cho một coin
-    """
     if symbol not in price_buffer:
         price_buffer[symbol] = deque(maxlen=MAX_BUFFER_SIZE)
     price_buffer[symbol].append(price)
 
+
 def predict_future_price(model, current_price, symbol=None):
-    """
-    Dự đoán giá tiếp theo dựa trên XGBoost + feature engineering
-    """
     if symbol is None:
-        # Fallback: nếu không có lịch sử giá, chỉ dùng giá hiện tại
         return round(current_price * 1.001, 2)
-    
-    # Lấy lịch sử giá
-    price_history = list(price_buffer.get(symbol, []))
-    if not price_history:
-        price_history = [current_price]
-    
-    # Thêm giá hiện tại nếu chưa có
-    if len(price_history) == 0 or price_history[-1] != current_price:
-        price_history.append(current_price)
-    
-    # Cập nhật buffer
-    update_price_buffer(symbol, current_price)
-    
-    # Tạo features
-    features = create_features(price_history)
-    if features is None:
-        # Nếu chưa đủ dữ liệu, dự đoán bằng simple trend
-        return round(current_price * (1 + np.random.uniform(-0.001, 0.001)), 2)
-    
-    # Dự đoán
+
+    history = list(price_buffer.get(symbol, []))
+
+    # Cần ít nhất WINDOW_SIZE + 1 giá để tính WINDOW_SIZE returns
+    if len(history) < WINDOW_SIZE + 1:
+        return round(current_price, 2)
+
+    returns = _to_returns(history[-(WINDOW_SIZE + 1):])  # đúng WINDOW_SIZE returns
+    X = torch.from_numpy(returns.astype(np.float32)).unsqueeze(0).unsqueeze(-1)  # (1, 60, 1)
+
     try:
-        X_input = np.array([[
-            features['price'],
-            features['ma5'],
-            features['ma10'],
-            features['ma20'],
-            features['momentum'],
-            features['volatility'],
-            features['trend'],
-            features['rsi'],
-            features['price_ratio'],
-        ]])
-        
-        predicted = model.predict(X_input)[0]
-        
-        # Kiểm soát ngoại lệ (prediction không được chênh lệch quá 5%)
-        max_deviation = current_price * 0.05
-        predicted = np.clip(predicted, current_price - max_deviation, current_price + max_deviation)
-        
-        return round(predicted, 2)
+        model.eval()
+        with torch.no_grad():
+            predicted_return = model(X).item()
+
+        # Giới hạn không cho dự đoán vọt >2% trong 1 phút (crypto thực tế hiếm hơn)
+        predicted_return = float(np.clip(predicted_return, -0.02, 0.02))
+        return round(current_price * (1 + predicted_return), 2)
     except Exception as e:
         print(f"Lỗi dự đoán: {e}")
         return round(current_price, 2)

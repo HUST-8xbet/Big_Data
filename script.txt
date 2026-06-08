@@ -1,0 +1,8 @@
+docker compose -f docker/docker-compose.yml up -d kafka kafka-init redpanda-console minio minio-init postgres influxdb
+
+python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+
+python3 Crawler/binance_producer.py
+
+cd frontend
+npm run dev

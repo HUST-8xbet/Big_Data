@@ -11,9 +11,8 @@ except (ImportError, ModuleNotFoundError):
     MissingPivotFunction = None
     print("⚠️  Cảnh báo: Bỏ qua MissingPivotFunction do phiên bản thư viện mới.")
 
-from backend.ml_service import load_ml_model, predict_future_price
+from backend.ml_service import load_ml_model, predict_future_price, update_price_buffer
 from influxdb_client.client.warnings import MissingPivotFunction
-from ml_service import load_ml_model, predict_future_price, update_price_buffer
 
 app = FastAPI(title="Crypto Price Prediction API")
 
@@ -101,13 +100,13 @@ def get_market_summary():
 
 # 1. API Lấy lịch sử (Thêm {symbol} vào đường dẫn)
 @app.get("/api/historical-price/{symbol}")
-def get_historical_price(symbol: str):
+def get_historical_price(symbol: str, minutes: int = 60):
     history_data = []
-    
-    # ĐÃ SỬA: Lấy lịch sử 2 tiếng (-2h) và gộp mỗi 1 phút 1 điểm (every: 1m)
+    minutes = max(15, min(minutes, 240))  # giới hạn 15–240 phút
+
     query = f'''
         from(bucket: "{INFLUX_BUCKET}")
-        |> range(start: -2h)
+        |> range(start: -{minutes}m)
         |> filter(fn: (r) => r["_measurement"] == "market_data")
         |> filter(fn: (r) => r["symbol"] == "{symbol}")
         |> filter(fn: (r) => r["_field"] == "price")
