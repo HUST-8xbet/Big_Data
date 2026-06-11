@@ -61,6 +61,35 @@ function Sparkline({ data, positive }) {
   );
 }
 
+// ── Header Clock ─────────────────────────────────────────────────────────────
+function HeaderClock() {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const fmt = (tz) => now.toLocaleTimeString('vi-VN', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false, timeZone: tz,
+  });
+
+  return (
+    <div className="header-clock">
+      <div className="clock-item">
+        <span className="clock-label">Việt Nam</span>
+        <span className="clock-value">{fmt('Asia/Ho_Chi_Minh')}</span>
+      </div>
+      <div className="clock-divider" />
+      <div className="clock-item">
+        <span className="clock-label">UTC</span>
+        <span className="clock-value">{fmt('UTC')}</span>
+      </div>
+    </div>
+  );
+}
+
 // ── Market Summary Stats ─────────────────────────────────────────────────────
 function MarketStats({ data }) {
   const total  = data.length;
@@ -73,28 +102,36 @@ function MarketStats({ data }) {
   return (
     <div className="market-stats">
       <div className="mstat-card">
-        <BarChartOutlined className="mstat-icon" />
+        <div className="mstat-icon-wrap">
+          <BarChartOutlined className="mstat-icon" />
+        </div>
         <div>
           <span className="mstat-value">{total}</span>
           <span className="mstat-label">Coin theo dõi</span>
         </div>
       </div>
       <div className="mstat-card up">
-        <RiseOutlined className="mstat-icon" />
+        <div className="mstat-icon-wrap">
+          <RiseOutlined className="mstat-icon" />
+        </div>
         <div>
           <span className="mstat-value">{gainers}</span>
           <span className="mstat-label">Tăng giá</span>
         </div>
       </div>
       <div className="mstat-card down">
-        <FallOutlined className="mstat-icon" />
+        <div className="mstat-icon-wrap">
+          <FallOutlined className="mstat-icon" />
+        </div>
         <div>
           <span className="mstat-value">{losers}</span>
           <span className="mstat-label">Giảm giá</span>
         </div>
       </div>
       <div className="mstat-card">
-        <DollarOutlined className="mstat-icon" />
+        <div className="mstat-icon-wrap">
+          <DollarOutlined className="mstat-icon" />
+        </div>
         <div>
           <span
             className="mstat-value"
@@ -251,14 +288,21 @@ export default function Home() {
       {/* ── Header ── */}
       <header className="home-header">
         <div className="header-brand">
-          <ThunderboltOutlined className="brand-icon" style={{ color: '#ffd700' }} />
-          <Title level={2} style={{ margin: 0, color: 'var(--text-h)' }}>
-            CryptoWatch
-          </Title>
+          <div className="brand-icon-wrap">
+            <ThunderboltOutlined className="brand-icon" />
+          </div>
+          <div>
+            <Title level={2} className="brand-title">CryptoWatch</Title>
+            <Text className="brand-subtitle">Theo dõi thị trường crypto theo thời gian thực</Text>
+          </div>
         </div>
-        <Tag icon={<ThunderboltOutlined style={{ color: '#ffd700' }} />} color="red" style={{ borderRadius: 20, fontSize: '28px', fontWeight: 'bold' }}>
-          Live Data
-        </Tag>
+        <div className="header-right">
+          <HeaderClock />
+          <div className="home-live-badge">
+            <span className="home-live-dot" />
+            Live Data
+          </div>
+        </div>
       </header>
 
       {/* ── Market Stats ── */}

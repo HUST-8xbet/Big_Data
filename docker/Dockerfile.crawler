@@ -1,0 +1,13 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir \
+    kafka-python-ng==2.2.3 \
+    websocket-client \
+    boto3 \
+    python-dotenv
+
+COPY Crawler/ .
+
+CMD ["python", "binance_producer.py"]

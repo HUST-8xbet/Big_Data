@@ -1,0 +1,35 @@
+# Build stage
+FROM node:20-alpine as builder
+
+# Nhận server IP từ docker-compose để nhúng vào bundle lúc build
+ARG VITE_API_URL=http://localhost:8000
+ARG VITE_WS_URL=ws://localhost:8000
+ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_WS_URL=$VITE_WS_URL
+
+WORKDIR /app
+
+COPY frontend/package.json frontend/package-lock.json ./
+
+RUN npm ci
+
+COPY frontend/ .
+
+RUN npm run build
+
+# Runtime stage - Dùng nginx để serve static files
+FROM nginx:alpine
+
+# Copy Nginx config
+COPY frontend/nginx.conf /etc/nginx/nginx.conf
+
+# Copy built files từ builder
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --quiet --tries=1 --spider http://localhost:80/index.html || exit 1
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
