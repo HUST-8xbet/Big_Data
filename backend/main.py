@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from influxdb_client import InfluxDBClient
 try:
     from influxdb_client.client.warnings import MissingPivotFunction
@@ -11,7 +12,7 @@ except (ImportError, ModuleNotFoundError):
     MissingPivotFunction = None
     print("⚠️  Cảnh báo: Bỏ qua MissingPivotFunction do phiên bản thư viện mới.")
 
-from backend.ml_service import load_ml_model, predict_future_price, update_price_buffer
+from backend.ml_service import load_ml_model, predict_future_price, update_price_buffer, forecast_future_prices
 from influxdb_client.client.warnings import MissingPivotFunction
 
 app = FastAPI(title="Crypto Price Prediction API")
@@ -27,6 +28,9 @@ INFLUX_URL = os.getenv("INFLUX_URL", "http://localhost:8086")
 INFLUX_TOKEN = os.getenv("INFLUX_TOKEN", "super-secret-token-12345")
 INFLUX_ORG = os.getenv("INFLUX_ORG", "crypto_org")
 INFLUX_BUCKET = os.getenv("INFLUX_BUCKET", "crypto_prices")
+
+# Múi giờ hiển thị cho frontend (InfluxDB lưu UTC)
+DISPLAY_TZ = ZoneInfo(os.getenv("DISPLAY_TZ", "Asia/Ho_Chi_Minh"))
 
 import warnings
 warnings.simplefilter("ignore", MissingPivotFunction)
@@ -124,13 +128,47 @@ def get_historical_price(symbol: str, minutes: int = 60):
                 update_price_buffer(symbol, real_price)
                 predicted = predict_future_price(my_ml_model, real_price, symbol)
                 history_data.append({
-                    "time": time_point.strftime("%H:%M:%S"),
+                    "time": time_point.astimezone(DISPLAY_TZ).strftime("%H:%M:%S"),
                     "real_price": round(real_price, 2),
                     "predicted_price": predicted
                 })
     except Exception as e:
         print(f"Lỗi lấy lịch sử InfluxDB: {e}")
     return history_data
+
+@app.get("/api/forecast/{symbol}")
+def get_forecast(symbol: str, steps: int = 15):
+    """Dự đoán giá nhiều bước tương lai (mỗi bước 1 phút) từ thời điểm dữ liệu mới nhất."""
+    from datetime import timedelta
+
+    steps = max(1, min(steps, 60))
+
+    # Lấy thời điểm của điểm dữ liệu mới nhất trong InfluxDB
+    query = f'''
+        from(bucket: "{INFLUX_BUCKET}")
+        |> range(start: -1h)
+        |> filter(fn: (r) => r["_measurement"] == "market_data")
+        |> filter(fn: (r) => r["symbol"] == "{symbol}")
+        |> filter(fn: (r) => r["_field"] == "price")
+        |> last()
+    '''
+    last_time = datetime.now(DISPLAY_TZ)
+    try:
+        tables = query_api.query(query, org=INFLUX_ORG)
+        for table in tables:
+            for record in table.records:
+                last_time = record.get_time().astimezone(DISPLAY_TZ)
+    except Exception as e:
+        print(f"Lỗi lấy thời điểm cuối {symbol}: {e}")
+
+    predictions = forecast_future_prices(my_ml_model, symbol, steps)
+    return [
+        {
+            "time": (last_time + timedelta(minutes=i + 1)).strftime("%H:%M:%S"),
+            "predicted_price": price,
+        }
+        for i, price in enumerate(predictions)
+    ]
 
 # 2. WebSocket Streaming (Thêm {symbol} vào đường dẫn)
 @app.websocket("/ws/live-price/{symbol}")
@@ -149,13 +187,13 @@ async def websocket_endpoint(websocket: WebSocket, symbol: str):
             '''
             tables = query_api.query(query, org=INFLUX_ORG)
             
-            now_str = datetime.now().strftime("%H:%M:%S")
+            now_str = datetime.now(DISPLAY_TZ).strftime("%H:%M:%S")
             real_price = None
-            
+
             for table in tables:
                 for record in table.records:
                     real_price = record.get_value()
-                    now_str = record.get_time().strftime("%H:%M:%S")
+                    now_str = record.get_time().astimezone(DISPLAY_TZ).strftime("%H:%M:%S")
             
             if real_price is not None:
                 update_price_buffer(symbol, real_price)

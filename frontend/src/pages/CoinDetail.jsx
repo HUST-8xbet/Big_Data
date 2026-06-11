@@ -81,6 +81,7 @@ export default function CoinDetail() {
   // Dữ liệu
   const [rawData,   setRawData]   = useState([]);   // toàn bộ dữ liệu gốc
   const [chartData, setChartData] = useState([]);   // dữ liệu hiển thị (theo time range)
+  const [forecast,  setForecast]  = useState([]);   // dự đoán tương lai (sau đường "Bây giờ")
   const [loading,   setLoading]   = useState(true);
   const [timeRange, setTimeRange] = useState(60);    // phút
 
@@ -127,6 +128,27 @@ export default function CoinDetail() {
   }, []);
 
   useEffect(() => { fetchHistory(coin, timeRange); }, [coin, timeRange, fetchHistory]);
+
+  // ── 2b. Fetch dự đoán tương lai (sau đường "Bây giờ"), refresh mỗi 30s ────
+  const fetchForecast = useCallback((sym) => {
+    fetch(`${API}/api/forecast/${sym}?steps=15`)
+      .then(r => r.json())
+      .then(data => {
+        setForecast(data.map(d => ({
+          displayTime: d.time,
+          predicted_price: d.predicted_price,
+          isForecast: true,
+        })));
+      })
+      .catch(() => setForecast([]));
+  }, []);
+
+  useEffect(() => {
+    setForecast([]);
+    fetchForecast(coin);
+    const timer = setInterval(() => fetchForecast(coin), 30000);
+    return () => clearInterval(timer);
+  }, [coin, timeRange, fetchForecast]);
 
   // ── 3. WebSocket ──────────────────────────────────────────────────────────
   const connectWs = useCallback((sym) => {
@@ -184,10 +206,11 @@ export default function CoinDetail() {
   const high = prices.length ? Math.max(...prices) : null;
   const low  = prices.length ? Math.min(...prices) : null;
 
-  // ── 6. Display data — Brush tự xử lý zoom, không cần slice thủ công ───────
+  // ── 6. Display data — lịch sử + dự đoán tương lai sau đường "Bây giờ" ─────
   const isLive = !isHistoryMode;
-  const displayData = chartData;
+  const displayData = chartData.length ? [...chartData, ...forecast] : chartData;
   const currentPrice = chartData.length ? chartData[chartData.length - 1].real_price : null;
+  const nowTime = chartData.length ? chartData[chartData.length - 1].displayTime : null;
 
   // Brush window: mặc định hiện 120 điểm cuối, follow live khi không ở history mode
   const brushStartIndex = Math.max(0, displayData.length - 120);
@@ -263,7 +286,7 @@ export default function CoinDetail() {
               <button
                 key={tr.value}
                 className={`range-btn ${timeRange === tr.value && isLive ? 'active' : ''}`}
-                onClick={() => { setTimeRange(tr.value); setScrubIndex(null); }}
+                onClick={() => setTimeRange(tr.value)}
               >
                 {tr.label}
               </button>
@@ -309,6 +332,23 @@ export default function CoinDetail() {
                   width={90}
                 />
                 <Tooltip content={<CustomTooltip />} />
+
+                {/* Đường kẻ dọc "Bây giờ" — bên phải là dự đoán tương lai */}
+                {nowTime && forecast.length > 0 && (
+                  <ReferenceLine
+                    x={nowTime}
+                    stroke="#ffd700"
+                    strokeDasharray="4 4"
+                    strokeWidth={1.5}
+                    label={{
+                      value: '◀ Bây giờ | Dự đoán ▶',
+                      position: 'insideTopRight',
+                      fill: '#ffd700',
+                      fontSize: 11,
+                      fontWeight: 600,
+                    }}
+                  />
+                )}
 
                 {/* Đường giá thực tế */}
                 <Line

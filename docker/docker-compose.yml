@@ -285,3 +285,67 @@ services:
     networks:
       - crypto-network
     restart: "no"
+
+  # ==========================================
+  # 6. CRAWLER — Kéo giá từ Binance → Kafka
+  # ==========================================
+  crawler:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.crawler
+    container_name: crypto_crawler
+    environment:
+      - KAFKA_BROKER=kafka:29092
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=password123
+    depends_on:
+      kafka:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - crypto-network
+    restart: unless-stopped
+
+  # ==========================================
+  # 7. BACKEND — FastAPI + LSTM prediction
+  # ==========================================
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    container_name: crypto_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=super-secret-token-12345
+      - INFLUX_ORG=crypto_org
+      - INFLUX_BUCKET=crypto_prices
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    networks:
+      - crypto-network
+    restart: unless-stopped
+
+  # ==========================================
+  # 8. FRONTEND — React + Nginx
+  # ==========================================
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend-k8s
+      args:
+        # Đặt SERVER_IP=<ip_server> trong file .env trước khi chạy
+        - VITE_API_URL=http://${SERVER_IP:-localhost}:8000
+        - VITE_WS_URL=ws://${SERVER_IP:-localhost}:8000
+    container_name: crypto_frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - crypto-network
+    restart: unless-stopped

@@ -24,10 +24,10 @@ def fetch_all_historical_data():
     influx_client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
     query_api = influx_client.query_api()
     
-    # Lấy tất cả dữ liệu từ 7 ngày trước
+    # Lấy tất cả dữ liệu từ 60 ngày trước
     query = f'''
         from(bucket: "{INFLUX_BUCKET}")
-        |> range(start: -7d)
+        |> range(start: -60d)
         |> filter(fn: (r) => r["_measurement"] == "market_data")
         |> filter(fn: (r) => r["_field"] == "price")
         |> sort(columns: ["_time"])
