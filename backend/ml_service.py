@@ -1,9 +1,21 @@
-import numpy as np
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
 from collections import deque
 import os
+
+try:
+    import numpy as np
+    import torch
+    import torch.nn as nn
+    from torch.utils.data import DataLoader, TensorDataset
+    ML_AVAILABLE = True
+    ML_IMPORT_ERROR = None
+except ImportError as exc:
+    np = None
+    torch = None
+    nn = None
+    DataLoader = None
+    TensorDataset = None
+    ML_AVAILABLE = False
+    ML_IMPORT_ERROR = exc
 
 WINDOW_SIZE   = 60    # 60 phút lịch sử làm input
 WARMUP        = 20    # số điểm đầu cần để MA20/volatility/RSI ổn định (bị cắt bỏ)
@@ -13,31 +25,51 @@ NUM_LAYERS    = 2
 BATCH_SIZE    = 512
 EPOCHS        = 20
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-torch.backends.cudnn.benchmark = True
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu") if ML_AVAILABLE else "cpu"
+if ML_AVAILABLE:
+    torch.backends.cudnn.benchmark = True
 
 ml_model = None
 price_buffer = {}
 MAX_BUFFER_SIZE = 120
 
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model.pt")
+MAX_MINUTE_RETURN = 0.002
+PREDICTION_DAMPING = 0.25
+MODEL_RETURN_WEIGHT = 0.35
+TECHNICAL_RETURN_WEIGHT = 0.65
 
 
-class LSTMModel(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.lstm = nn.LSTM(
-            input_size=NUM_FEATURES,
-            hidden_size=HIDDEN_SIZE,
-            num_layers=NUM_LAYERS,
-            batch_first=True,
-            dropout=0.2,
-        )
-        self.fc = nn.Linear(HIDDEN_SIZE, 1)
+def _round_price(price):
+    price = float(price)
+    abs_price = abs(price)
+    if abs_price >= 100:
+        return round(price, 2)
+    if abs_price >= 1:
+        return round(price, 4)
+    if abs_price >= 0.01:
+        return round(price, 6)
+    return round(price, 8)
 
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        return self.fc(out[:, -1, :])  # lấy output của timestep cuối
+
+if ML_AVAILABLE:
+    class LSTMModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lstm = nn.LSTM(
+                input_size=NUM_FEATURES,
+                hidden_size=HIDDEN_SIZE,
+                num_layers=NUM_LAYERS,
+                batch_first=True,
+                dropout=0.2,
+            )
+            self.fc = nn.Linear(HIDDEN_SIZE, 1)
+
+        def forward(self, x):
+            out, _ = self.lstm(x)
+            return self.fc(out[:, -1, :])  # lấy output của timestep cuối
+else:
+    LSTMModel = None
 
 
 # ── Feature engineering (vectorized) ─────────────────────────────────────────
@@ -118,6 +150,10 @@ def _create_sequences(prices):
 def train_model_on_historical_data(historical_prices):
     global ml_model
 
+    if not ML_AVAILABLE:
+        print(f"⚠️  Không thể train LSTM vì thiếu dependency ML: {ML_IMPORT_ERROR}")
+        return
+
     min_points = WINDOW_SIZE + WARMUP + 1
     all_X, all_y = [], []
     for symbol, prices in historical_prices.items():
@@ -186,6 +222,12 @@ def load_ml_model():
     print("🚀 Đang khởi tạo LSTM model...")
     print(f"🖥️  Thiết bị: {DEVICE}")
 
+    if not ML_AVAILABLE:
+        ml_model = None
+        print(f"⚠️  Bỏ qua LSTM vì thiếu dependency ML: {ML_IMPORT_ERROR}")
+        print("ℹ️  Backend vẫn chạy, prediction sẽ dùng fallback bằng giá hiện tại.")
+        return ml_model
+
     model = LSTMModel().to(DEVICE)
 
     if os.path.exists(MODEL_PATH):
@@ -211,11 +253,80 @@ def update_price_buffer(symbol, price):
     price_buffer[symbol].append(price)
 
 
+def _stabilize_return(predicted_return, recent_prices):
+    """Keep one-minute forecasts visually and statistically sane.
+
+    The LSTM is trained on short, noisy minute data. Raw outputs can be biased,
+    so we damp them and cap by recent realized volatility.
+    """
+    predicted_return = float(predicted_return) * PREDICTION_DAMPING
+
+    dynamic_cap = _recent_return_cap(recent_prices)
+    return float(np.clip(predicted_return, -dynamic_cap, dynamic_cap))
+
+
+def _recent_return_cap(recent_prices):
+    prices = np.asarray(recent_prices, dtype=np.float64)
+    if len(prices) >= 10:
+        returns = np.diff(prices) / prices[:-1]
+        recent_vol = float(np.nanstd(returns[-30:]))
+        dynamic_cap = min(MAX_MINUTE_RETURN, max(0.0002, recent_vol * 1.5))
+    else:
+        dynamic_cap = MAX_MINUTE_RETURN
+
+    return dynamic_cap
+
+
+def _technical_forecast_return(recent_prices):
+    """Per-symbol baseline from recent market structure.
+
+    This gives the forecast a coin-specific direction even when the shared LSTM
+    collapses toward a small global bias.
+    """
+    prices = np.asarray(recent_prices, dtype=np.float64)
+    if len(prices) < 3:
+        return 0.0
+
+    returns = np.diff(prices) / prices[:-1]
+    returns = returns[np.isfinite(returns)]
+    if len(returns) == 0:
+        return 0.0
+
+    short = float(np.mean(returns[-min(5, len(returns)) :]))
+    mid = float(np.mean(returns[-min(20, len(returns)) :]))
+    long = float(np.mean(returns[-min(60, len(returns)) :]))
+    momentum = 0.55 * short + 0.30 * mid + 0.15 * long
+
+    ma20 = float(np.mean(prices[-min(20, len(prices)) :]))
+    ma60 = float(np.mean(prices[-min(60, len(prices)) :]))
+    distance20 = (prices[-1] / ma20 - 1.0) if ma20 else 0.0
+    distance60 = (prices[-1] / ma60 - 1.0) if ma60 else 0.0
+    mean_reversion = -0.015 * distance20 - 0.005 * distance60
+
+    cap = _recent_return_cap(prices)
+    return float(np.clip(momentum + mean_reversion, -cap, cap))
+
+
+def _hybrid_forecast_return(model_return, recent_prices):
+    """Blend LSTM output with a per-symbol technical baseline."""
+    model_part = _stabilize_return(model_return, recent_prices)
+    technical_part = _technical_forecast_return(recent_prices)
+    blended = (
+        MODEL_RETURN_WEIGHT * model_part
+        + TECHNICAL_RETURN_WEIGHT * technical_part
+    )
+    cap = _recent_return_cap(recent_prices)
+    return float(np.clip(blended, -cap, cap))
+
+
 def forecast_future_prices(model, symbol, steps=15):
     """Dự đoán nhiều bước tương lai (mỗi bước 1 phút) bằng rollout lặp:
     dự đoán return kế tiếp → nối giá mới vào chuỗi → dự đoán tiếp.
     Trả về list giá dự đoán, [] nếu buffer chưa đủ dữ liệu.
     """
+    if not ML_AVAILABLE or model is None:
+        return []
+
     history = list(price_buffer.get(symbol, []))
     min_required = WINDOW_SIZE + WARMUP
 
@@ -226,15 +337,17 @@ def forecast_future_prices(model, symbol, steps=15):
     out = []
     try:
         model.eval()
-        for _ in range(steps):
+        for step in range(steps):
             arr = np.array(prices[-min_required:], dtype=np.float64)
             features = _compute_feature_matrix(arr)[-WINDOW_SIZE:]
             X = torch.from_numpy(features).unsqueeze(0).to(DEVICE)
             with torch.no_grad():
-                predicted_return = model(X).item()
-            predicted_return = float(np.clip(predicted_return, -0.02, 0.02))
+                model_return = model(X).item()
+            predicted_return = _hybrid_forecast_return(model_return, prices[-min_required:])
+            horizon_decay = max(0.35, 1.0 - step * 0.04)
+            predicted_return *= horizon_decay
             next_price = prices[-1] * (1 + predicted_return)
-            out.append(round(next_price, 2))
+            out.append(_round_price(next_price))
             prices.append(next_price)
     except Exception as e:
         print(f"Lỗi dự đoán tương lai {symbol}: {e}")
@@ -243,14 +356,17 @@ def forecast_future_prices(model, symbol, steps=15):
 
 
 def predict_future_price(model, current_price, symbol=None):
+    if not ML_AVAILABLE or model is None:
+        return _round_price(current_price)
+
     if symbol is None:
-        return round(current_price * 1.001, 2)
+        return _round_price(current_price * 1.001)
 
     history = list(price_buffer.get(symbol, []))
     min_required = WINDOW_SIZE + WARMUP
 
     if len(history) < min_required:
-        return round(current_price, 2)
+        return _round_price(current_price)
 
     prices = np.array(history[-min_required:], dtype=np.float64)
     features = _compute_feature_matrix(prices)[-WINDOW_SIZE:]  # (WINDOW_SIZE, NUM_FEATURES)
@@ -260,11 +376,10 @@ def predict_future_price(model, current_price, symbol=None):
     try:
         model.eval()
         with torch.no_grad():
-            predicted_return = model(X).item()
+            model_return = model(X).item()
 
-        # Giới hạn không cho dự đoán vọt >2% trong 1 phút
-        predicted_return = float(np.clip(predicted_return, -0.02, 0.02))
-        return round(current_price * (1 + predicted_return), 2)
+        predicted_return = _hybrid_forecast_return(model_return, prices)
+        return _round_price(current_price * (1 + predicted_return))
     except Exception as e:
         print(f"Lỗi dự đoán: {e}")
-        return round(current_price, 2)
+        return _round_price(current_price)

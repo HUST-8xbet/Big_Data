@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { Table, Input, InputNumber, Typography, Tag, notification } from 'antd';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { Table, Input, InputNumber, Typography, Tag, notification, Button, Modal, Select } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import {
   LineChart, Line, ResponsiveContainer, YAxis, ReferenceLine,
@@ -7,6 +7,7 @@ import {
 import {
   RiseOutlined, FallOutlined, ThunderboltOutlined,
   SearchOutlined, BarChartOutlined, DollarOutlined,
+  BellOutlined, DeleteOutlined, PlusOutlined,
 } from '@ant-design/icons';
 import '../styles/Home.css';
 
@@ -16,19 +17,49 @@ const { Search } = Input;
 // ── API ──────────────────────────────────────────────────────────────────────
 // ✅ Dynamic API URL - support cả localhost (dev) và Kubernetes
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const ALERTS_STORAGE_KEY = 'cryptowatch_price_alerts';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function formatPrice(v) {
   if (v == null) return '–';
+  const value = Number(v);
+  const abs = Math.abs(value);
+  const fractionDigits =
+    abs >= 100 ? 2 :
+    abs >= 1 ? 4 :
+    abs >= 0.01 ? 6 :
+    8;
   return '$' + Number(v).toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
   });
 }
 
 function fmtPct(v) {
   const sign = v >= 0 ? '+' : '';
   return `${sign}${Number(v).toFixed(2)}%`;
+}
+
+function makeAlertId() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function isAlertTriggered(alert, price) {
+  return alert.direction === 'below'
+    ? price <= alert.targetPrice
+    : price >= alert.targetPrice;
+}
+
+function alertDescription(alert, currentPrice) {
+  const directionText = alert.direction === 'below' ? 'dưới hoặc bằng' : 'trên hoặc bằng';
+  return `Giá hiện tại ${formatPrice(currentPrice)} đã ${directionText} ${formatPrice(alert.targetPrice)}`;
+}
+
+function alertNotificationKey(alert) {
+  return `price-alert-${alert.id}`;
 }
 
 // ── Mini Sparkline ───────────────────────────────────────────────────────────
@@ -149,12 +180,66 @@ function MarketStats({ data }) {
 // ── Home ──────────────────────────────────────────────────────────────────────
 export default function Home() {
   const [data,       setData]       = useState([]);
-  const prevDataRef  = useRef({});
   const [loading,    setLoading]    = useState(true);
   const [searchText, setSearchText] = useState('');
   const [minPrice,   setMinPrice]   = useState(null);
   const [maxPrice,   setMaxPrice]   = useState(null);
+  const [alertOpen,  setAlertOpen]  = useState(false);
+  const [alertSymbol, setAlertSymbol] = useState(null);
+  const [alertDirection, setAlertDirection] = useState('below');
+  const [alertPrice, setAlertPrice] = useState(null);
+  const [alerts, setAlerts] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(ALERTS_STORAGE_KEY) || '[]');
+    } catch {
+      return [];
+    }
+  });
   const navigate = useNavigate();
+
+  useEffect(() => {
+    localStorage.setItem(ALERTS_STORAGE_KEY, JSON.stringify(alerts));
+  }, [alerts]);
+
+  const evaluateAlerts = useCallback((marketData) => {
+    const coinBySymbol = new Map(marketData.map(coin => [coin.id, coin]));
+
+    setAlerts(currentAlerts => {
+      let changed = false;
+
+      const nextAlerts = currentAlerts.map(alert => {
+        const coin = coinBySymbol.get(alert.symbol);
+        if (!coin || coin.current_price == null) return alert;
+
+        const currentPrice = Number(coin.current_price);
+        const triggered = isAlertTriggered(alert, currentPrice);
+        const wasTriggered = Boolean(alert.triggered);
+
+        if (triggered && !wasTriggered) {
+          notification.warning({
+            key: alertNotificationKey(alert),
+            message: `${alert.symbol} chạm ngưỡng giá`,
+            description: alertDescription(alert, currentPrice),
+            placement: 'topRight',
+            duration: 6,
+          });
+        }
+
+        if (triggered !== wasTriggered) {
+          changed = true;
+          return {
+            ...alert,
+            triggered,
+            lastTriggeredAt: triggered ? Date.now() : alert.lastTriggeredAt,
+          };
+        }
+
+        return alert;
+      });
+
+      return changed ? nextAlerts : currentAlerts;
+    });
+  }, []);
 
   // ── Fetch initial data ──
   useEffect(() => {
@@ -163,48 +248,25 @@ export default function Home() {
       .then(json => { 
         setData(json); 
         setLoading(false);
-        // Initialize prevData
-        prevDataRef.current = {};
-        json.forEach(coin => {
-          prevDataRef.current[coin.id] = coin.price_change_percentage_24h;
-        });
+        evaluateAlerts(json);
       })
       .catch(() => setLoading(false));
-  }, []);
+  }, [evaluateAlerts]);
 
-  // ── Fetch updated data every 10 seconds and check for drops ──
+  // ── Fetch updated data every 10 seconds and check user-configured alerts ──
   useEffect(() => {
     const interval = setInterval(() => {
       fetch(`${API}/api/market-summary`)
         .then(r => r.json())
         .then(json => {
-          json.forEach(coin => {
-            const prevChange = prevDataRef.current[coin.id];
-            const currentChange = coin.price_change_percentage_24h;
-            
-            // Check if change dropped (became more negative or increased less)
-            if (prevChange !== undefined && currentChange < prevChange) {
-              notification.warning({
-                message: `${coin.symbol.toUpperCase()} - Giá đang giảm`,
-                description: `Biến động: ${fmtPct(prevChange)} → ${fmtPct(currentChange)}`,
-                placement: 'topRight',
-                duration: 4,
-              });
-            }
-          });
-          
-          // Update data and prevDataRef
           setData(json);
-          prevDataRef.current = {};
-          json.forEach(coin => {
-            prevDataRef.current[coin.id] = coin.price_change_percentage_24h;
-          });
+          evaluateAlerts(json);
         })
         .catch(() => {});
     }, 10000); // Update every 10 seconds
     
     return () => clearInterval(interval);
-  }, []);
+  }, [evaluateAlerts]);
 
   const filtered = useMemo(() =>
     data.filter(coin => {
@@ -221,6 +283,57 @@ export default function Home() {
     }),
     [data, searchText, minPrice, maxPrice]
   );
+
+  const coinOptions = useMemo(() =>
+    data
+      .map(coin => ({
+        value: coin.id,
+        label: `${coin.name} (${coin.id})`,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+    [data]
+  );
+
+  const selectedAlertCoin = useMemo(
+    () => data.find(coin => coin.id === alertSymbol),
+    [data, alertSymbol]
+  );
+
+  const addPriceAlert = () => {
+    if (!alertSymbol || !alertPrice || Number(alertPrice) <= 0) return;
+
+    const targetPrice = Number(alertPrice);
+    const currentPrice = selectedAlertCoin?.current_price;
+    const newAlert = {
+      id: makeAlertId(),
+      symbol: alertSymbol,
+      direction: alertDirection,
+      targetPrice,
+      triggered: currentPrice != null
+        ? isAlertTriggered({ direction: alertDirection, targetPrice }, Number(currentPrice))
+        : false,
+      createdAt: Date.now(),
+      lastTriggeredAt: null,
+    };
+
+    setAlerts(prev => [newAlert, ...prev]);
+
+    if (newAlert.triggered && currentPrice != null) {
+      notification.warning({
+        key: alertNotificationKey(newAlert),
+        message: `${newAlert.symbol} đang chạm ngưỡng giá`,
+        description: alertDescription(newAlert, Number(currentPrice)),
+        placement: 'topRight',
+        duration: 6,
+      });
+    }
+
+    setAlertPrice(null);
+  };
+
+  const removePriceAlert = (id) => {
+    setAlerts(prev => prev.filter(alert => alert.id !== id));
+  };
 
   const columns = [
     {
@@ -314,7 +427,14 @@ export default function Home() {
           <Text strong style={{ color: 'var(--text-h)', fontSize: 16 }}>
             Bảng giá thị trường
           </Text>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <div className="table-tools">
+            <Button
+              className="alert-button"
+              icon={<BellOutlined />}
+              onClick={() => setAlertOpen(true)}
+            >
+              Cảnh báo{alerts.length ? ` (${alerts.length})` : ''}
+            </Button>
             <Search
               placeholder="Tìm coin (BTC, ETH, SOL...)"
               allowClear
@@ -357,6 +477,83 @@ export default function Home() {
           locale={{ emptyText: 'Không tìm thấy coin nào.' }}
         />
       </div>
+
+      <Modal
+        title="Cảnh báo giá"
+        open={alertOpen}
+        onCancel={() => setAlertOpen(false)}
+        footer={null}
+        width={680}
+        className="alert-modal"
+      >
+        <div className="alert-form">
+          <Select
+            showSearch
+            placeholder="Chọn coin"
+            value={alertSymbol}
+            onChange={setAlertSymbol}
+            options={coinOptions}
+            optionFilterProp="label"
+            className="alert-coin-select"
+          />
+          <Select
+            value={alertDirection}
+            onChange={setAlertDirection}
+            options={[
+              { value: 'below', label: 'Dưới hoặc bằng' },
+              { value: 'above', label: 'Trên hoặc bằng' },
+            ]}
+            className="alert-direction-select"
+          />
+          <InputNumber
+            min={0}
+            value={alertPrice}
+            onChange={setAlertPrice}
+            placeholder="Giá USD"
+            className="alert-price-input"
+          />
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={addPriceAlert}
+            disabled={!alertSymbol || !alertPrice || Number(alertPrice) <= 0}
+            className="alert-add-button"
+          >
+            Thêm
+          </Button>
+        </div>
+
+        {selectedAlertCoin && (
+          <div className="alert-current-price">
+            Giá hiện tại của {selectedAlertCoin.id}: <strong>{formatPrice(selectedAlertCoin.current_price)}</strong>
+          </div>
+        )}
+
+        <div className="alert-list">
+          {alerts.length === 0 ? (
+            <div className="alert-empty">Chưa có cảnh báo nào.</div>
+          ) : alerts.map(alert => (
+            <div className={`alert-row ${alert.triggered ? 'triggered' : ''}`} key={alert.id}>
+              <div className="alert-rule">
+                <span className="alert-symbol">{alert.symbol}</span>
+                <span className="alert-threshold">
+                  Giá {alert.direction === 'below' ? '≤' : '≥'} {formatPrice(alert.targetPrice)}
+                </span>
+              </div>
+              <span className="alert-status">
+                {alert.triggered ? 'Đã chạm ngưỡng' : 'Đang theo dõi'}
+              </span>
+              <Button
+                type="text"
+                icon={<DeleteOutlined />}
+                onClick={() => removePriceAlert(alert.id)}
+                className="alert-delete-button"
+                aria-label={`Xóa cảnh báo ${alert.symbol}`}
+              />
+            </div>
+          ))}
+        </div>
+      </Modal>
 
       <footer className="home-footer">
         <Text type="secondary" style={{ fontSize: 12 }}>

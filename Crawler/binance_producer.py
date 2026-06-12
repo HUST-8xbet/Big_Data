@@ -37,7 +37,7 @@ DEFAULT_COINS = [
     'xlmusdt', 'suiusdt', 'tonusdt', 'hbarusdt', 'shibusdt',
     'ltcusdt', 'dotusdt', 'bchusdt', 'uniusdt', 'nearusdt',
     'aptusdt', 'aaveusdt', 'etcusdt', 'icpusdt', 'filusdt',
-    'arbusdt', 'opususdt', 'injusdt', 'atomusdt', 'polusdt',
+    'arbusdt', 'opusdt', 'injusdt', 'atomusdt', 'polusdt',
 ]
 COINS = [
     coin.strip().lower()

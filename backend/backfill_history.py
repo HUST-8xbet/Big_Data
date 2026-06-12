@@ -6,6 +6,7 @@ Chạy: python backfill_history.py
 """
 
 import time
+import os
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -20,15 +21,21 @@ INFLUX_BUCKET = "crypto_prices"
 BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 INTERVAL = "1m"
 LIMIT = 1000  # tối đa Binance cho phép mỗi request
-DAYS_BACK = 60
+SLEEP_SECONDS = float(os.getenv("BACKFILL_SLEEP_SECONDS", "0.2"))
+DAYS_BACK = float(os.getenv("BACKFILL_DAYS", "60"))
 
-COINS = [
+DEFAULT_COINS = [
     'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT',
     'ADAUSDT', 'DOGEUSDT', 'TRXUSDT', 'LINKUSDT', 'AVAXUSDT',
     'XLMUSDT', 'SUIUSDT', 'TONUSDT', 'HBARUSDT', 'SHIBUSDT',
     'LTCUSDT', 'DOTUSDT', 'BCHUSDT', 'UNIUSDT', 'NEARUSDT',
     'APTUSDT', 'AAVEUSDT', 'ETCUSDT', 'ICPUSDT', 'FILUSDT',
     'ARBUSDT', 'OPUSDT', 'INJUSDT', 'ATOMUSDT', 'POLUSDT',
+]
+COINS = [
+    coin.strip().upper()
+    for coin in os.getenv("BINANCE_COINS", ",".join(DEFAULT_COINS)).split(",")
+    if coin.strip()
 ]
 
 
@@ -75,7 +82,7 @@ def fetch_klines(symbol, start_ms, end_ms):
         if len(klines) < LIMIT:
             break
 
-        time.sleep(0.2)
+        time.sleep(SLEEP_SECONDS)
 
     return all_klines
 

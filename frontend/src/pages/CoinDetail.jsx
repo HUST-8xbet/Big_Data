@@ -1,5 +1,5 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, Brush, ReferenceLine,
@@ -17,7 +17,6 @@ const { Option } = Select;
 // ── API base ──────────────────────────────────────────────────────────────────
 // ✅ Dynamic API URL - support cả localhost (dev) và Kubernetes
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const WS_API = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
 
 // ── TIME RANGE options (minutes) ─────────────────────────────────────────────
 const TIME_RANGES = [
@@ -31,7 +30,17 @@ const TIME_RANGES = [
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function formatPrice(v) {
   if (v == null) return '–';
-  return '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const value = Number(v);
+  const abs = Math.abs(value);
+  const fractionDigits =
+    abs >= 100 ? 2 :
+    abs >= 1 ? 4 :
+    abs >= 0.01 ? 6 :
+    8;
+  return '$' + value.toLocaleString('en-US', {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  });
 }
 
 function calcChange(p) {
@@ -88,11 +97,7 @@ export default function CoinDetail() {
   // History mode: user đã kéo Brush ra khỏi live
   const [isHistoryMode, setIsHistoryMode] = useState(false);
 
-  // WebSocket
-  const [wsConnected, setWsConnected] = useState(false);
-  const wsRef        = useRef(null);
-  const reconnectTmr = useRef(null);
-  const isMounted    = useRef(true);
+  const [liveConnected, setLiveConnected] = useState(false);
 
   // ── 1. Lấy danh sách coin từ market-summary ──────────────────────────────
   useEffect(() => {
@@ -103,31 +108,49 @@ export default function CoinDetail() {
   }, []);
 
   // ── 2. Fetch lịch sử ──────────────────────────────────────────────────────
-  const fetchHistory = useCallback((sym, minutes) => {
-    setLoading(true);
-    setRawData([]);
-    setChartData([]);
-    setIsHistoryMode(false);
+  const fetchHistory = useCallback((sym, minutes, { silent = false } = {}) => {
+    if (!silent) {
+      setLoading(true);
+      setRawData([]);
+      setChartData([]);
+      setIsHistoryMode(false);
+    }
 
     fetch(`${API}/api/historical-price/${sym}?minutes=${minutes}`)
       .then(r => r.json())
       .then(data => {
-        if (!data.length) { setLoading(false); return; }
+        if (!data.length) {
+          setLoading(false);
+          setLiveConnected(false);
+          return;
+        }
         const enriched = data.map((d, i) => ({
           ...d,
           _index: i,
           displayTime: d.time,
         }));
         setRawData(enriched);
+        setLiveConnected(true);
         setLoading(false);
       })
       .catch(err => {
         console.error('Lỗi fetch lịch sử:', err);
+        setLiveConnected(false);
         setLoading(false);
       });
   }, []);
 
   useEffect(() => { fetchHistory(coin, timeRange); }, [coin, timeRange, fetchHistory]);
+
+  // Poll nến 1 phút. Không clear chart để tránh nhấp nháy/giật viewport.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (!isHistoryMode) {
+        fetchHistory(coin, timeRange, { silent: true });
+      }
+    }, 60000);
+    return () => clearInterval(timer);
+  }, [coin, timeRange, isHistoryMode, fetchHistory]);
 
   // ── 2b. Fetch dự đoán tương lai (sau đường "Bây giờ"), refresh mỗi 30s ────
   const fetchForecast = useCallback((sym) => {
@@ -137,6 +160,7 @@ export default function CoinDetail() {
         setForecast(data.map(d => ({
           displayTime: d.time,
           predicted_price: d.predicted_price,
+          isAnchor: Boolean(d.anchor),
           isForecast: true,
         })));
       })
@@ -146,54 +170,9 @@ export default function CoinDetail() {
   useEffect(() => {
     setForecast([]);
     fetchForecast(coin);
-    const timer = setInterval(() => fetchForecast(coin), 30000);
+    const timer = setInterval(() => fetchForecast(coin), 60000);
     return () => clearInterval(timer);
-  }, [coin, timeRange, fetchForecast]);
-
-  // ── 3. WebSocket ──────────────────────────────────────────────────────────
-  const connectWs = useCallback((sym) => {
-    if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
-
-    const ws = new WebSocket(`${WS_API}/ws/live-price/${sym}`);
-    wsRef.current = ws;
-
-    ws.onopen = () => { if (isMounted.current) setWsConnected(true); };
-
-    ws.onmessage = (evt) => {
-      if (!isMounted.current) return;
-      const pt = JSON.parse(evt.data);
-      setRawData(prev => {
-        if (!prev.length) return prev;
-        const last = prev[prev.length - 1];
-        const newPt = {
-          ...pt,
-          _index: last._index + 1,
-          displayTime: pt.time,
-        };
-        const next = [...prev, newPt];
-        // Giới hạn raw data ≤ 2000 điểm
-        return next.length > 2000 ? next.slice(next.length - 2000) : next;
-      });
-    };
-
-    ws.onerror = () => {};
-    ws.onclose = () => {
-      if (!isMounted.current) return;
-      setWsConnected(false);
-      // Tự reconnect sau 3s
-      reconnectTmr.current = setTimeout(() => connectWs(sym), 3000);
-    };
-  }, []);
-
-  useEffect(() => {
-    isMounted.current = true;
-    connectWs(coin);
-    return () => {
-      isMounted.current = false;
-      clearTimeout(reconnectTmr.current);
-      if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
-    };
-  }, [coin, connectWs]);
+  }, [coin, fetchForecast]);
 
   // ── 4. rawData → chartData (API đã trả đúng range, không cần slice) ──────
   useEffect(() => {
@@ -208,13 +187,33 @@ export default function CoinDetail() {
 
   // ── 6. Display data — lịch sử + dự đoán tương lai sau đường "Bây giờ" ─────
   const isLive = !isHistoryMode;
-  const displayData = chartData.length ? [...chartData, ...forecast] : chartData;
   const currentPrice = chartData.length ? chartData[chartData.length - 1].real_price : null;
   const nowTime = chartData.length ? chartData[chartData.length - 1].displayTime : null;
+  const futureForecast = useMemo(
+    () => (forecast[0]?.isAnchor ? forecast.slice(1) : forecast),
+    [forecast]
+  );
+  const historicalDisplayData = useMemo(() => chartData.map((point, index) => ({
+    ...point,
+    // Historical one-step predictions are useful for debugging, but visually
+    // they make the forecast line look like it has already predicted the past.
+    predicted_price: index === chartData.length - 1 && forecast.length > 0
+      ? point.real_price
+      : null,
+  })), [chartData, forecast.length]);
+  const displayData = useMemo(
+    () => (chartData.length ? [...historicalDisplayData, ...futureForecast] : chartData),
+    [chartData, historicalDisplayData, futureForecast]
+  );
 
-  // Brush window: mặc định hiện 120 điểm cuối, follow live khi không ở history mode
-  const brushStartIndex = Math.max(0, displayData.length - 120);
-  const brushEndIndex   = displayData.length > 0 ? displayData.length - 1 : 0;
+  const yDomain = useMemo(() => {
+    const values = displayData.flatMap(d => [d.real_price, d.predicted_price]).filter(v => v != null);
+    if (!values.length) return ['auto', 'auto'];
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const pad = Math.max((max - min) * 0.08, Math.abs(max || 1) * 0.0005);
+    return [min - pad, max + pad];
+  }, [displayData]);
 
   return (
     <div className="detail-page">
@@ -245,8 +244,8 @@ export default function CoinDetail() {
         </div>
 
         <div className="header-status">
-          <Tag color={wsConnected ? 'green' : 'red'} icon={<ThunderboltOutlined />}>
-            {wsConnected ? 'WS: Online' : 'WS: Offline'}
+          <Tag color={liveConnected ? 'green' : 'red'} icon={<ThunderboltOutlined />}>
+            {liveConnected ? 'Live: On' : 'Live: Syncing'}
           </Tag>
         </div>
       </header>
@@ -324,7 +323,7 @@ export default function CoinDetail() {
                   interval="preserveStartEnd"
                 />
                 <YAxis
-                  domain={['auto', 'auto']}
+                  domain={yDomain}
                   tick={{ fill: '#9ca3af', fontSize: 11 }}
                   tickLine={false}
                   axisLine={false}
@@ -383,8 +382,6 @@ export default function CoinDetail() {
                     stroke="rgba(255,255,255,0.15)"
                     fill="#1e2230"
                     travellerWidth={8}
-                    startIndex={isHistoryMode ? undefined : brushStartIndex}
-                    endIndex={isHistoryMode ? undefined : brushEndIndex}
                     onChange={(state) => {
                       if (!state) return;
                       // Nếu end chưa đến cuối → history mode

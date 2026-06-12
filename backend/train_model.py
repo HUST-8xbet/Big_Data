@@ -7,6 +7,7 @@ Chạy: python train_model.py
 from influxdb_client import InfluxDBClient
 from ml_service import train_model_on_historical_data
 import warnings
+import os
 
 warnings.simplefilter("ignore")
 
@@ -14,6 +15,8 @@ INFLUX_URL = "http://localhost:8086"
 INFLUX_TOKEN = "super-secret-token-12345"
 INFLUX_ORG = "crypto_org"
 INFLUX_BUCKET = "crypto_prices"
+TRAIN_DAYS = float(os.getenv("TRAIN_DAYS", "7"))
+TRAIN_MINUTES = max(1, int(TRAIN_DAYS * 24 * 60))
 
 def fetch_all_historical_data():
     """
@@ -24,12 +27,14 @@ def fetch_all_historical_data():
     influx_client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
     query_api = influx_client.query_api()
     
-    # Lấy tất cả dữ liệu từ 60 ngày trước
+    # Lấy dữ liệu theo nến 1 phút. Realtime trade stream có thể rất dày,
+    # còn LSTM đang giả định mỗi timestep là 1 phút.
     query = f'''
         from(bucket: "{INFLUX_BUCKET}")
-        |> range(start: -60d)
+        |> range(start: -{TRAIN_MINUTES}m)
         |> filter(fn: (r) => r["_measurement"] == "market_data")
         |> filter(fn: (r) => r["_field"] == "price")
+        |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
         |> sort(columns: ["_time"])
     '''
     
