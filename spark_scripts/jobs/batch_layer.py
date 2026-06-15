@@ -74,7 +74,7 @@ print(f"🗄️  [BATCH LAYER] Khởi động — mode: {args.mode}")
 kafka_options = {
     "kafka.bootstrap.servers": KAFKA_BROKER,
     "subscribe": KAFKA_TOPIC_PRICES,
-    "startingOffsets": "earliest" if args.mode == "batch" else "latest",
+    "startingOffsets": "earliest",
     "failOnDataLoss": "false"
     # Đã xóa các dòng security.protocol, sasl.mechanism và sasl.jaas.config
 }
