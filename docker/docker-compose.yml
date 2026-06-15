@@ -1,6 +1,3 @@
-version: '3.8'
-
-# Định nghĩa mạng chung cho toàn bộ các service giao tiếp với nhau
 networks:
   crypto-network:
     driver: bridge
@@ -13,12 +10,6 @@ volumes:
   influxdb_data:
 
 services:
-  # ==========================================
-  # 1. KAFKA (Chế độ KRaft) & REDPANDA CONSOLE
-  # ==========================================
-  # ==========================================
-  # 1. KAFKA (Image Apache Chính chủ - KRaft)
-  # ==========================================
   kafka:
     image: apache/kafka:3.7.0
     container_name: crypto_kafka
@@ -35,12 +26,15 @@ services:
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
     volumes:
       - kafka_data:/var/lib/kafka/data
     networks:
       - crypto-network
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -51,7 +45,7 @@ services:
     container_name: crypto_kafka_init
     depends_on:
       kafka:
-        condition: service_healthy # Chỉ chạy khi Kafka đã sẵn sàng
+        condition: service_healthy
     command: >
       bash -c "
       echo 'Đang khởi tạo các Topic cho dự án...' &&
@@ -62,8 +56,6 @@ services:
     networks:
       - crypto-network
 
-
-  # Giao diện xem Kafka siêu mượt
   redpanda-console:
     image: redpandadata/console:latest
     container_name: crypto_redpanda_console
@@ -77,9 +69,6 @@ services:
     networks:
       - crypto-network
 
-  # ==========================================
-  # 2. MINIO (Data Lake)
-  # ==========================================
   minio:
     image: minio/minio:latest
     container_name: crypto_minio
@@ -100,7 +89,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Tự động tạo sẵn 3 Bucket (Chạy xong tự tắt)
   minio-init:
     image: minio/mc:latest
     container_name: crypto_minio_init
@@ -119,9 +107,6 @@ services:
     networks:
       - crypto-network
 
-  # ==========================================
-  # 3. DATABASE: POSTGRESQL & INFLUXDB
-  # ==========================================
   postgres:
     image: postgres:15
     container_name: crypto_postgres
@@ -130,13 +115,13 @@ services:
     environment:
       - POSTGRES_USER=admin
       - POSTGRES_PASSWORD=password123
-      - POSTGRES_DB=crypto_db
+      - POSTGRES_DB=cryptodb
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - crypto-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d crypto_db"]
+      test: ["CMD-SHELL", "pg_isready -U admin -d cryptodb"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -163,29 +148,19 @@ services:
       timeout: 5s
       retries: 5
 
-  # ==========================================
-  # 4. APACHE SPARK CLUSTER
-  # ==========================================
- # ==========================================
-  # 4. APACHE SPARK CLUSTER (Đã trị bệnh ngủ đông)
-  # ==========================================
- # ==========================================
-  # 4. APACHE SPARK CLUSTER (Chuẩn Senior)
-  # ==========================================
   spark-master:
     build:
-      context: .
-      dockerfile: Dockerfile.spark
+      context: ..
+      dockerfile: docker/Dockerfile.spark
     container_name: crypto_spark_master
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
     ports:
       - "7077:7077"
-      - "8080:8080" # Trả về cổng 8080 quen thuộc để bạn dễ xem UI
+      - "8080:8080"
     volumes:
-      - ./:/opt/project
+      - ../:/opt/project
     networks:
       - crypto-network
-    # Bắt mạch Master xem đã thức chưa
     healthcheck:
       test: ["CMD-SHELL", "curl -sSf http://localhost:8080/ | grep 'Spark Master' > /dev/null"]
       interval: 10s
@@ -194,23 +169,21 @@ services:
 
   spark-worker:
     build:
-      context: .
-      dockerfile: Dockerfile.spark
+      context: ..
+      dockerfile: docker/Dockerfile.spark
     container_name: crypto_spark_worker
     depends_on:
       spark-master:
         condition: service_healthy
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     volumes:
-      - ./:/opt/project
+      - ../:/opt/project
     networks:
       - crypto-network
-
-
   spark-submit:
     build:
-      context: .
-      dockerfile: Dockerfile.spark
+      context: ..
+      dockerfile: docker/Dockerfile.spark
     container_name: crypto_spark_submit
     depends_on:
       spark-master:
@@ -221,23 +194,26 @@ services:
       /opt/spark/bin/spark-submit
       --master spark://spark-master:7077
       --conf "spark.executorEnv.PYTHONPATH=/opt/project/spark_scripts"
+      --conf "spark.executorEnv.KAFKA_BROKER=kafka:29092"
+      --conf "spark.executorEnv.INFLUX_URL=http://influxdb:8086"
       /opt/project/spark_scripts/jobs/speed_layer_influx.py
     volumes:
-      - ./:/opt/project
+      - ../:/opt/project
     environment:
       - PYTHONPATH=/opt/project/spark_scripts
+      - KAFKA_BROKER=kafka:29092
+      - KAFKA_TOPIC_PRICES=binance_live_prices
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=super-secret-token-12345
+      - INFLUX_ORG=crypto_org
+      - INFLUX_BUCKET=crypto_prices
     networks:
       - crypto-network
 
-  # ==========================================
-  # 5. BATCH LAYER — Apache Spark Batch Jobs
-  # ==========================================
-
-  # Job khởi tạo: đọc full Kafka topic → seed PostgreSQL + MinIO (chạy 1 lần)
   batch-init:
     build:
-      context: .
-      dockerfile: Dockerfile.spark
+      context: ..
+      dockerfile: docker/Dockerfile.spark
     container_name: crypto_batch_init
     depends_on:
       spark-master:
@@ -250,18 +226,27 @@ services:
       /opt/project/spark_scripts/jobs/batch_layer.py
       --mode batch
     volumes:
-      - ./:/opt/project
+      - ../:/opt/project
     environment:
       - PYTHONPATH=/opt/project
+      - KAFKA_BROKER=kafka:29092
+      - KAFKA_TOPIC_PRICES=binance_live_prices
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_DB=cryptodb
+      - PG_USER=admin
+      - PG_PASSWORD=password123
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=password123
     networks:
       - crypto-network
     restart: "no"
 
-  # Job định kỳ: micro-batch (2 giờ gần nhất), chạy mỗi 10 phút
   batch-micro:
     build:
-      context: .
-      dockerfile: Dockerfile.spark
+      context: ..
+      dockerfile: docker/Dockerfile.spark
     container_name: crypto_batch_micro
     depends_on:
       spark-master:
@@ -269,11 +254,116 @@ services:
       kafka:
         condition: service_healthy
     command: >
-      /opt/spark/bin/spark-class org.apache.spark.deploy.rest.LaunchSubmittedApplication
+      /opt/spark/bin/spark-submit
+      --master spark://spark-master:7077
+      /opt/project/spark_scripts/jobs/batch_layer.py
+      --mode micro
+      --offset-minutes 120
     volumes:
-      - ./:/opt/project
+      - ../:/opt/project
     environment:
       - PYTHONPATH=/opt/project
+      - KAFKA_BROKER=kafka:29092
+      - KAFKA_TOPIC_PRICES=binance_live_prices
+      - PG_HOST=postgres
+      - PG_PORT=5432
+      - PG_DB=cryptodb
+      - PG_USER=admin
+      - PG_PASSWORD=password123
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=password123
     networks:
       - crypto-network
     restart: "no"
+
+  crawler:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.crawler
+    container_name: crypto_crawler
+    environment:
+      - KAFKA_BROKER=kafka:29092
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=password123
+    depends_on:
+      kafka:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - crypto-network
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    container_name: crypto_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=super-secret-token-12345
+      - INFLUX_ORG=crypto_org
+      - INFLUX_BUCKET=crypto_prices
+      - DISPLAY_TZ=Asia/Ho_Chi_Minh
+      - ALLOWED_ORIGINS=*
+      - MODEL_PATH=/app/model.pt
+      - LOAD_MODEL_FROM_MINIO=1
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=password123
+      - MINIO_MODEL_BUCKET=ml-models
+      - MINIO_MODEL_KEY=lstm/model.pt
+    depends_on:
+      influxdb:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - crypto-network
+    restart: unless-stopped
+
+  model-trainer-minio:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.ml-trainer
+    container_name: crypto_model_trainer_minio
+    command: python spark_scripts/ml/train_from_minio.py
+    profiles:
+      - training
+    environment:
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=password123
+      - MINIO_TRAIN_BUCKET=raw-data
+      - MINIO_TRAIN_PREFIX=binance/
+      - MINIO_MODEL_BUCKET=ml-models
+      - MINIO_MODEL_KEY=lstm/model.pt
+      - MODEL_PATH=/app/spark_scripts/ml/artifacts/model.pt
+      - TRAIN_DAYS=7
+      - UPLOAD_MODEL_TO_MINIO=1
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - crypto-network
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend-k8s
+      args:
+        # Đặt SERVER_IP=<ip_server> trong file .env trước khi chạy
+        - VITE_API_URL=http://${SERVER_IP:-localhost}:8000
+        - VITE_WS_URL=ws://${SERVER_IP:-localhost}:8000
+    container_name: crypto_frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - crypto-network
+    restart: unless-stopped

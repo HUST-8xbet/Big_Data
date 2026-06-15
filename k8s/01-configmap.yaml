@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crypto-config # Đặt tên chung
+  namespace: crypto-system
+data:
+  KAFKA_BROKER: "kafka:9092"
+  KAFKA_TOPIC_PRICES: "binance_live_prices"
+  PG_HOST: "postgres"
+  PG_PORT: "5432"
+  PG_DB: "cryptodb"
+  PG_USER: "admin"
+  # Lưu ý: Tên service trong minio.yaml của Minh là minio-service
+  MINIO_ENDPOINT: "http://minio-service:9000" 
+  INFLUX_URL: "http://influxdb:8086"
+  INFLUX_ORG: "crypto_org"
+  INFLUX_BUCKET: "crypto_prices"
+  DISPLAY_TZ: "Asia/Ho_Chi_Minh"
+  ALLOWED_ORIGINS: "*"
+  MODEL_PATH: "/app/model.pt"
+  LOAD_MODEL_FROM_MINIO: "1"
+  MINIO_MODEL_BUCKET: "ml-models"
+  MINIO_MODEL_KEY: "lstm/model.pt"

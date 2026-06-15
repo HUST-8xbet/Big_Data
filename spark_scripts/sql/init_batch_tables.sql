@@ -70,3 +70,49 @@ CREATE INDEX IF NOT EXISTS idx_stats_symbol_window
     ON market_stats (symbol, window_label, window_start DESC);
 CREATE INDEX IF NOT EXISTS idx_alerts_symbol_active
     ON user_alerts (symbol, is_active);
+
+-- ── Users (Quản lý tài khoản) ───────────────────────────────
+CREATE TABLE IF NOT EXISTS users (
+    id            SERIAL PRIMARY KEY,
+    username      VARCHAR(50) UNIQUE NOT NULL,
+    email         VARCHAR(100) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    is_active     BOOLEAN DEFAULT TRUE,
+    created_at    TIMESTAMP DEFAULT NOW()
+);
+
+-- Thêm khóa ngoại cho bảng user_alerts (chạy cái này sau khi tạo bảng users)
+ALTER TABLE user_alerts 
+ADD CONSTRAINT fk_user 
+FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+
+-- ── Alert History (Lịch sử cảnh báo đã bắn) ─────────────────
+CREATE TABLE IF NOT EXISTS alert_history (
+    id            SERIAL PRIMARY KEY,
+    user_id       INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    alert_rule_id INTEGER REFERENCES user_alerts(id) ON DELETE CASCADE,
+    symbol        VARCHAR(20) NOT NULL,
+    triggered_at  TIMESTAMP DEFAULT NOW(),
+    trigger_price DOUBLE PRECISION NOT NULL,
+    message       TEXT NOT NULL,
+    is_read       BOOLEAN DEFAULT FALSE  -- Đánh dấu đã đọc/chưa đọc trên UI
+);
+
+-- ── ML Predictions (Kết quả dự báo của Model) ───────────────
+CREATE TABLE IF NOT EXISTS ml_predictions (
+    id               SERIAL PRIMARY KEY,
+    symbol           VARCHAR(20) NOT NULL,
+    prediction_time  TIMESTAMP NOT NULL, -- Thời điểm đưa ra dự báo
+    target_time      TIMESTAMP NOT NULL, -- Dự báo cho tương lai (ví dụ: 4h sau)
+    model_version    VARCHAR(50),        -- Lưu version lấy từ MLflow/MinIO
+    prediction_type  VARCHAR(20),        -- 'PRICE_UP', 'PRICE_DOWN', 'VOLATILITY'
+    confidence_score DOUBLE PRECISION,   -- Độ tin cậy (VD: 0.85 = 85%)
+    created_at       TIMESTAMP DEFAULT NOW(),
+    UNIQUE(symbol, prediction_time, model_version)
+);
+
+-- ── Bổ sung Index cho các bảng mới ──────────────────────────
+CREATE INDEX IF NOT EXISTS idx_alert_history_user
+    ON alert_history (user_id, triggered_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ml_predictions_symbol_time
+    ON ml_predictions (symbol, target_time DESC);

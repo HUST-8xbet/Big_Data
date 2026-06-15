@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crawler
+  namespace: crypto-system
+  labels:
+    app: crawler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: crawler
+  template:
+    metadata:
+      labels:
+        app: crawler
+    spec:
+      containers:
+      - name: crawler
+        image: crypto-crawler:latest
+        imagePullPolicy: Never
+        envFrom:
+        - configMapRef:
+            name: crypto-config
+        - secretRef:
+            name: backend-secrets
+        env:
+        - name: KAFKA_TOPIC
+          valueFrom:
+            configMapKeyRef:
+              name: crypto-config
+              key: KAFKA_TOPIC_PRICES
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 300m
+            memory: 256Mi
