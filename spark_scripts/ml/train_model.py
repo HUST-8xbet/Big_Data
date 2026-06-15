@@ -4,17 +4,24 @@ Script để huấn luyện mô hình LSTM trên dữ liệu lịch sử
 Chạy: python train_model.py
 """
 
-from influxdb_client import InfluxDBClient
-from ml_service import train_model_on_historical_data
 import warnings
 import os
+import sys
+
+from influxdb_client import InfluxDBClient
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from backend.ml_service import train_model_on_historical_data
 
 warnings.simplefilter("ignore")
 
-INFLUX_URL = "http://localhost:8086"
-INFLUX_TOKEN = "super-secret-token-12345"
-INFLUX_ORG = "crypto_org"
-INFLUX_BUCKET = "crypto_prices"
+INFLUX_URL = os.getenv("INFLUX_URL", "http://localhost:8086")
+INFLUX_TOKEN = os.getenv("INFLUX_TOKEN", "super-secret-token-12345")
+INFLUX_ORG = os.getenv("INFLUX_ORG", "crypto_org")
+INFLUX_BUCKET = os.getenv("INFLUX_BUCKET", "crypto_prices")
 TRAIN_DAYS = float(os.getenv("TRAIN_DAYS", "7"))
 TRAIN_MINUTES = max(1, int(TRAIN_DAYS * 24 * 60))
 

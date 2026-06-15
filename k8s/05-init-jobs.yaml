@@ -1,0 +1,121 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-topic-init
+  namespace: crypto-system
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: kafka-topic-init
+        image: apache/kafka:3.7.0
+        command:
+        - bash
+        - -c
+        - |
+          until /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list >/dev/null 2>&1; do
+            echo "Waiting for Kafka..."
+            sleep 5
+          done
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic binance_live_prices --partitions 3 --replication-factor 1
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic user_alerts_topic --partitions 1 --replication-factor 1
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-bucket-init
+  namespace: crypto-system
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: minio-bucket-init
+        image: minio/mc:latest
+        envFrom:
+        - secretRef:
+            name: backend-secrets
+        command:
+        - /bin/sh
+        - -c
+        - |
+          until mc alias set local http://minio-service:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; do
+            echo "Waiting for MinIO..."
+            sleep 5
+          done
+          mc mb --ignore-existing local/raw-data
+          mc mb --ignore-existing local/processed-data
+          mc mb --ignore-existing local/ml-models
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: postgres-schema-init
+  namespace: crypto-system
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: postgres-schema-init
+        image: postgres:15-alpine
+        envFrom:
+        - configMapRef:
+            name: crypto-config
+        - secretRef:
+            name: backend-secrets
+        command:
+        - /bin/sh
+        - -c
+        - |
+          until pg_isready -h postgres -p 5432 -U "$PG_USER" -d "$PG_DB"; do
+            echo "Waiting for PostgreSQL..."
+            sleep 5
+          done
+          PGPASSWORD="$PG_PASSWORD" psql -h postgres -U "$PG_USER" -d "$PG_DB" <<'SQL'
+          CREATE TABLE IF NOT EXISTS ohlcv_candles (
+              id SERIAL PRIMARY KEY,
+              symbol VARCHAR(20) NOT NULL,
+              interval VARCHAR(5) NOT NULL,
+              open_time TIMESTAMP NOT NULL,
+              close_time TIMESTAMP,
+              open DOUBLE PRECISION,
+              high DOUBLE PRECISION,
+              low DOUBLE PRECISION,
+              close DOUBLE PRECISION,
+              volume DOUBLE PRECISION,
+              trade_count BIGINT,
+              avg_price DOUBLE PRECISION,
+              high_low_pct DOUBLE PRECISION,
+              close_change_pct DOUBLE PRECISION,
+              created_at TIMESTAMP DEFAULT NOW(),
+              UNIQUE(symbol, interval, open_time)
+          );
+          CREATE TABLE IF NOT EXISTS market_stats (
+              id SERIAL PRIMARY KEY,
+              symbol VARCHAR(20) NOT NULL,
+              window_label VARCHAR(5) NOT NULL,
+              window_start TIMESTAMP NOT NULL,
+              window_end TIMESTAMP,
+              vwap DOUBLE PRECISION,
+              avg_price DOUBLE PRECISION,
+              max_price DOUBLE PRECISION,
+              min_price DOUBLE PRECISION,
+              total_volume DOUBLE PRECISION,
+              trade_count BIGINT,
+              volatility DOUBLE PRECISION,
+              created_at TIMESTAMP DEFAULT NOW(),
+              UNIQUE(symbol, window_label, window_start)
+          );
+          CREATE TABLE IF NOT EXISTS symbol_profiles (
+              id SERIAL PRIMARY KEY,
+              symbol VARCHAR(20) UNIQUE NOT NULL,
+              last_price DOUBLE PRECISION,
+              volume_total DOUBLE PRECISION,
+              price_change_pct DOUBLE PRECISION,
+              updated_at TIMESTAMP DEFAULT NOW()
+          );
+          CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol_interval ON ohlcv_candles (symbol, interval, open_time DESC);
+          CREATE INDEX IF NOT EXISTS idx_stats_symbol_window ON market_stats (symbol, window_label, window_start DESC);
+          SQL

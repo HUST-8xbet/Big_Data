@@ -14,9 +14,9 @@ sleep 2
 echo "🔗 Đang kết nối vào các dịch vụ K8s..."
 
 # Nhóm dịch vụ ở namespace 'default'
-kubectl port-forward service/minio-service 9000:9000 -n default &
-kubectl port-forward service/kafka 9092:9092 -n default &
-kubectl port-forward service/postgres 5432:5432 -n default &
+kubectl port-forward service/minio-service 9000:9000 -n crypto-system &
+kubectl port-forward service/kafka 9092:9092 -n crypto-system &
+kubectl port-forward service/postgres 5432:5432 -n crypto-system &
 
 # Nhóm dịch vụ ở namespace 'crypto-system'
 kubectl port-forward service/influxdb 8086:8086 -n crypto-system &
@@ -32,14 +32,14 @@ python3 Crawler/binance_producer.py > producer.log 2>&1 &
 
 # ĐÂY LÀ PHẦN QUAN TRỌNG NHẤT CHO WEB DASHBOARD
 echo "⚡ Đang bật Speed Layer (Real-time to InfluxDB)..."
-python3 spark_scripts/speed_layer_influx.py > spark_speed.log 2>&1 &
+python3 spark_scripts/jobs/speed_layer_influx.py > spark_speed.log 2>&1 &
 
 echo "🚨 Đang bật Hệ thống Cảnh báo Động (Alerts)..."
-python3 spark_scripts/dynamic_alert.py > spark_alerts.log 2>&1 &
+python3 spark_scripts/jobs/dynamic_alert.py > spark_alerts.log 2>&1 &
 
 echo "📊 Đang khởi động Batch Layer Scheduler..."
 # Sử dụng file .sh bạn Minh vừa tạo để chạy định kỳ
-bash spark_scripts/batch_scheduler.sh > batch.log 2>&1 &
+bash spark_scripts/jobs/batch_scheduler.sh > batch.log 2>&1 &
 
 # 5. Mở giao diện Frontend bằng Minikube Tunnel
 echo "🌐 Đang mở Website Frontend..."

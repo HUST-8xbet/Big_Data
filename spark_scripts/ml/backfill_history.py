@@ -2,7 +2,7 @@
 """
 Backfill dữ liệu lịch sử (nến 1 phút) từ Binance Klines API → InfluxDB
 Giúp có đủ data để train_model.py chạy ngay, không cần đợi crawler.
-Chạy: python backfill_history.py
+Chạy: python spark_scripts/ml/backfill_history.py
 """
 
 import time
@@ -13,10 +13,10 @@ import requests
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 
-INFLUX_URL = "http://localhost:8086"
-INFLUX_TOKEN = "super-secret-token-12345"
-INFLUX_ORG = "crypto_org"
-INFLUX_BUCKET = "crypto_prices"
+INFLUX_URL = os.getenv("INFLUX_URL", "http://localhost:8086")
+INFLUX_TOKEN = os.getenv("INFLUX_TOKEN", "super-secret-token-12345")
+INFLUX_ORG = os.getenv("INFLUX_ORG", "crypto_org")
+INFLUX_BUCKET = os.getenv("INFLUX_BUCKET", "crypto_prices")
 
 BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 INTERVAL = "1m"
@@ -132,7 +132,7 @@ def main():
 
     print("\n" + "=" * 60)
     print(f"✅ Hoàn tất! Tổng cộng {total_points} điểm cho {len(COINS)} coin")
-    print("💡 Bây giờ có thể chạy: python train_model.py")
+    print("💡 Bây giờ có thể chạy: python spark_scripts/ml/train_model.py")
     print("=" * 60)
 
 

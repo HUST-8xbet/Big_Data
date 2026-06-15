@@ -29,10 +29,10 @@
 
 ```bash
 # Build backend
-docker build -f Dockerfile.backend-k8s -t crypto-backend:latest .
+docker build -f docker/Dockerfile.backend-k8s -t crypto-backend:latest .
 
 # Build frontend
-docker build -f Dockerfile.frontend-k8s -t crypto-frontend:latest .
+docker build -f docker/Dockerfile.frontend-k8s -t crypto-frontend:latest .
 ```
 
 ### Step 2: Load images vào Minikube (nếu dùng minikube)

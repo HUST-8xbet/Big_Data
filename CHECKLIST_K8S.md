@@ -133,13 +133,13 @@ chmod +x /docker-entrypoint.d/10-subst-env-vars.sh
 ### Bước 3: Build & Test Locally
 ```bash
 # Test backend
-docker build -f Dockerfile.backend-k8s -t crypto-backend:latest .
+docker build -f docker/Dockerfile.backend-k8s -t crypto-backend:latest .
 docker run -p 8000:8000 \
   -e INFLUX_URL=http://host.docker.internal:8086 \
   crypto-backend:latest
 
 # Test frontend
-docker build -f Dockerfile.frontend-k8s -t crypto-frontend:latest .
+docker build -f docker/Dockerfile.frontend-k8s -t crypto-frontend:latest .
 docker run -p 3000:80 \
   -e BACKEND_HOST=host.docker.internal \
   crypto-frontend:latest

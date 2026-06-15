@@ -6,7 +6,7 @@ metadata:
   labels:
     app: frontend
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: frontend
@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: crypto-frontend:v2  # ✅ Sẽ build từ Dockerfile.frontend-k8s
+        image: crypto-frontend:latest
         imagePullPolicy: Never
         ports:
         - containerPort: 80

@@ -78,7 +78,10 @@ eventLog/
 *.onnx
 *.pb
 *.model
+*.pt
+*.npz
 models/local_cache/
+spark_scripts/ml/artifacts/
 
 # --- Cấu hình IDE & Hệ điều hành ---
 .vscode/
@@ -98,4 +101,5 @@ Desktop.ini
 .docker/
 kubeconfig
 *.crt
-*.keybackend/venv310/
+*.key
+backend/venv310/

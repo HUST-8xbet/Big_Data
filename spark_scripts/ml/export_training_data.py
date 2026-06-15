@@ -9,15 +9,19 @@ Chạy: python export_training_data.py
 import numpy as np
 from influxdb_client import InfluxDBClient
 import warnings
+import os
 
 warnings.simplefilter("ignore")
 
-INFLUX_URL = "http://localhost:8086"
-INFLUX_TOKEN = "super-secret-token-12345"
-INFLUX_ORG = "crypto_org"
-INFLUX_BUCKET = "crypto_prices"
+INFLUX_URL = os.getenv("INFLUX_URL", "http://localhost:8086")
+INFLUX_TOKEN = os.getenv("INFLUX_TOKEN", "super-secret-token-12345")
+INFLUX_ORG = os.getenv("INFLUX_ORG", "crypto_org")
+INFLUX_BUCKET = os.getenv("INFLUX_BUCKET", "crypto_prices")
 
-OUTPUT_FILE = "training_data.npz"
+OUTPUT_FILE = os.getenv(
+    "TRAINING_DATA_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "artifacts", "training_data.npz"),
+)
 
 
 def main():
@@ -62,8 +66,8 @@ def main():
     print("\n" + "=" * 60)
     print(f"✅ Đã lưu {len(arrays)} coin vào {OUTPUT_FILE}")
     print("💡 Bước tiếp theo:")
-    print(f"   scp {OUTPUT_FILE} user@server:~/Big_Data/backend/")
-    print("   # trên server: python train_from_file.py")
+    print(f"   scp {OUTPUT_FILE} user@server:~/Big_Data/spark_scripts/ml/artifacts/")
+    print("   # trên server: python spark_scripts/ml/train_from_file.py")
     print("=" * 60)
 
 

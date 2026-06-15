@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-speed-layer
+  namespace: crypto-system
+  labels:
+    app: spark-speed-layer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spark-speed-layer
+  template:
+    metadata:
+      labels:
+        app: spark-speed-layer
+    spec:
+      containers:
+      - name: spark-speed-layer
+        image: crypto-spark:latest
+        imagePullPolicy: Never
+        command:
+        - /opt/spark/bin/spark-submit
+        - --master
+        - local[*]
+        - /opt/spark/spark_scripts/jobs/speed_layer_influx.py
+        envFrom:
+        - configMapRef:
+            name: crypto-config
+        - secretRef:
+            name: backend-secrets
+        env:
+        - name: PYTHONPATH
+          value: /opt/spark/spark_scripts
+        resources:
+          requests:
+            cpu: 300m
+            memory: 768Mi
+          limits:
+            cpu: "1"
+            memory: 1536Mi

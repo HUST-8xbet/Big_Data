@@ -33,7 +33,16 @@ ml_model = None
 price_buffer = {}
 MAX_BUFFER_SIZE = 120
 
-MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model.pt")
+MODEL_PATH = os.getenv(
+    "MODEL_PATH",
+    os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "spark_scripts",
+        "ml",
+        "artifacts",
+        "model.pt",
+    ),
+)
 MAX_MINUTE_RETURN = 0.002
 PREDICTION_DAMPING = 0.25
 MODEL_RETURN_WEIGHT = 0.35
@@ -50,6 +59,35 @@ def _round_price(price):
     if abs_price >= 0.01:
         return round(price, 6)
     return round(price, 8)
+
+
+def _download_model_from_minio_if_configured():
+    enabled = os.getenv("LOAD_MODEL_FROM_MINIO", "0").lower() in {"1", "true", "yes"}
+    if not enabled or os.path.exists(MODEL_PATH):
+        return
+
+    try:
+        import boto3
+        from botocore.config import Config
+
+        endpoint = os.getenv("MINIO_ENDPOINT", "http://localhost:9000")
+        access_key = os.getenv("MINIO_ROOT_USER", os.getenv("MINIO_ACCESS_KEY", "admin"))
+        secret_key = os.getenv("MINIO_ROOT_PASSWORD", os.getenv("MINIO_SECRET_KEY", "password123"))
+        bucket = os.getenv("MINIO_MODEL_BUCKET", "ml-models")
+        key = os.getenv("MINIO_MODEL_KEY", "lstm/model.pt")
+
+        os.makedirs(os.path.dirname(os.path.abspath(MODEL_PATH)), exist_ok=True)
+        client = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            config=Config(signature_version="s3v4"),
+        )
+        client.download_file(bucket, key, MODEL_PATH)
+        print(f"☁️  Đã tải model từ s3://{bucket}/{key} về {MODEL_PATH}")
+    except Exception as e:
+        print(f"⚠️  Không tải được model từ MinIO: {e}")
 
 
 if ML_AVAILABLE:
@@ -213,6 +251,7 @@ def train_model_on_historical_data(historical_prices):
         print(f"  Epoch {epoch+1:>3}/{EPOCHS} — train: {train_loss/len(train_loader):.6f}  val: {val_loss/len(val_loader):.6f}")
 
     ml_model = model
+    os.makedirs(os.path.dirname(os.path.abspath(MODEL_PATH)), exist_ok=True)
     torch.save(model.state_dict(), MODEL_PATH)
     print(f"✅ LSTM đã được huấn luyện trên {len(X)} samples, lưu vào {MODEL_PATH}")
 
@@ -228,6 +267,8 @@ def load_ml_model():
         print("ℹ️  Backend vẫn chạy, prediction sẽ dùng fallback bằng giá hiện tại.")
         return ml_model
 
+    _download_model_from_minio_if_configured()
+
     model = LSTMModel().to(DEVICE)
 
     if os.path.exists(MODEL_PATH):
@@ -235,13 +276,13 @@ def load_ml_model():
             model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
             model.eval()
             ml_model = model
-            print("✅ LSTM model đã được load từ model.pt")
+            print(f"✅ LSTM model đã được load từ {MODEL_PATH}")
             return ml_model
         except Exception as e:
             print(f"⚠️  Lỗi load model: {e}")
 
     ml_model = model
-    print("⚠️  Sử dụng LSTM chưa được huấn luyện — hãy chạy train_model.py trước")
+    print("⚠️  Sử dụng LSTM chưa được huấn luyện — hãy chạy spark_scripts/ml/train_from_minio.py trước")
     return ml_model
 
 

@@ -13,10 +13,13 @@ from utils.schemas import BINANCE_SCHEMA
 # [CHANGED] SCHEMA được định nghĩa trong utils/schemas.py để tái sử dụng cho nhiều job khác nhau
 
 # 1. Khởi tạo Spark Session
-spark = SparkSession.builder \
-    .appName("Crypto_SpeedLayer_InfluxDB") \
-    .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0") \
-    .getOrCreate()
+builder = SparkSession.builder.appName("Crypto_SpeedLayer_InfluxDB")
+if os.getenv("SPARK_USE_PACKAGES", "0").lower() in {"1", "true", "yes"}:
+    builder = builder.config(
+        "spark.jars.packages",
+        "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0",
+    )
+spark = builder.getOrCreate()
 
 spark.sparkContext.setLogLevel("WARN")
 print("🚀 [SPARK] Đã khởi động! Bắt đầu hút dữ liệu và bơm vào InfluxDB...")
@@ -25,7 +28,7 @@ print("🚀 [SPARK] Đã khởi động! Bắt đầu hút dữ liệu và bơm 
 raw_stream = spark \
     .readStream \
     .format("kafka") \
-    .option("kafka.bootstrap.servers", KAFKA_BROKER) \
+    .option("kafka.bootstrap.servers", "localhost:9092") \
     .option("subscribe", KAFKA_TOPIC_PRICES) \
     .option("startingOffsets", "latest") \
     .load()
@@ -45,7 +48,7 @@ def write_to_influxdb(batch_df, batch_id):
         return
 
     # Khởi tạo Client
-    client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
+    client = InfluxDBClient(url="http://localhost:8086", token=INFLUX_TOKEN, org=INFLUX_ORG)
     write_api = client.write_api(write_options=SYNCHRONOUS)
 
     points = []

@@ -6,7 +6,7 @@ metadata:
   labels:
     app: backend
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: backend
@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: backend  # <--- CHỈ ĐỂ DUY NHẤT 1 KHỐI NÀY
-        image: crypto-backend:v1
+        image: crypto-backend:latest
         imagePullPolicy: Never
         ports:
         - containerPort: 8000
@@ -35,7 +35,7 @@ spec:
           periodSeconds: 20
         readinessProbe:
           httpGet:
-            path: /health
+            path: /ready
             port: 8000
           initialDelaySeconds: 5
           periodSeconds: 10
@@ -46,3 +46,20 @@ spec:
           limits:
             cpu: 500m
             memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: crypto-system
+  labels:
+    app: backend
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+    protocol: TCP

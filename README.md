@@ -1,527 +1,294 @@
-# 📚 CryptoWatch - Hướng Dẫn Chạy Toàn Bộ Hệ Thống
+# CryptoWatch Big Data Pipeline
 
-## 🏗️ Kiến Trúc Hệ Thống
+CryptoWatch la pipeline theo huong Lambda Architecture cho du lieu gia crypto:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     CryptoWatch System                          │
-├──────────────┬──────────────┬──────────────┬────────────────────┤
-│   Frontend   │   Backend    │   Crawler    │   Spark Batch      │
-│  (React/SPA) │  (FastAPI)   │  (Binance)   │   (Processing)     │
-└──────┬───────┴──────┬───────┴──────┬───────┴────────┬───────────┘
-       │              │              │                │
-       └──────────────┴──────────────┴────────────────┘
-                      │
-       ┌──────────────┼──────────────┐
-       │              │              │
-    ┌──▼──┐      ┌───▼──┐      ┌───▼──┐
-    │Kafka│      │MinIO │      │Influx│
-    │     │      │      │      │      │
-    └─────┘      └──────┘      └──────┘
-       │              │              │
-       └──────────────┴──────────────┘
-           ✅ Data Pipeline
-```
+- `Crawler/`: lay trade realtime tu Binance, day vao Kafka va luu raw JSON vao MinIO.
+- `spark_scripts/jobs/`: speed layer ghi Kafka -> InfluxDB, batch layer tinh OHLCV/market stats -> PostgreSQL va MinIO.
+- `backend/`: FastAPI doc InfluxDB va phuc vu API/forecast bang LSTM.
+- `frontend/`: React + Vite dashboard.
+- `docker/`: Dockerfile va Docker Compose cho moi truong local.
+- `k8s/`: manifest Kubernetes cho namespace `crypto-system`.
 
----
+## Yeu Cau
 
-## 🚀 QUICK START - 3 Cách Chạy
+- Python 3.11+.
+- Node.js 20+ va npm.
+- Docker Desktop/Engine + Docker Compose neu chay bang container.
+- Java/Spark local neu muon chay Spark job ngoai Docker.
+- Kubernetes/minikube va `kubectl` neu deploy K8S.
 
-### **Cách 1️⃣: Chạy LOCAL (Development Mode)**
+## Chay Chinh Bang Kubernetes
 
-#### Prerequisites
+Day la cach chay dung de thoa man yeu cau Kubernetes.
+
+### 1. Start Minikube nhe hon cho WSL
+
 ```bash
-# 1. Python 3.11+
-python --version
-
-# 2. Node.js 18+
-node --version npm --version
-
-# 3. Docker & Docker Compose
-docker --version docker-compose --version
+minikube start --driver=docker --cpus=4 --memory=6144 --disk-size=30g
 ```
 
-#### Step 1: Start Docker Compose (Kafka, InfluxDB, PostgreSQL, MinIO)
+Neu may it RAM, dung `--memory=4096` va chay tung phan pipeline, nhung Spark/ML se cham hon.
+
+### 2. Build images truc tiep trong Minikube
+
+Khuyen nghi dung cach nay tren WSL de tranh `minikube image load` lam treo may:
+
 ```bash
 cd /home/minh1234/BigData
-
-# Khởi động toàn bộ infrastructure
-docker-compose up -d
-
-# Kiểm tra status
-docker-compose ps
-
-# Xem logs (nếu có lỗi)
-docker-compose logs -f
+eval "$(minikube docker-env)"
 ```
 
-#### Step 2: Start Backend
-```bash
-# Terminal 1
-cd /home/minh1234/BigData
-
-# Activate venv
-source venv/bin/activate
-
-# Start FastAPI server
-uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
-
-# Output:
-# INFO:     Uvicorn running on http://0.0.0.0:8000
-# INFO:     Application startup complete
-```
-
-#### Step 3: Start Frontend
-```bash
-# Terminal 2
-cd /home/minh1234/BigData/frontend
-
-# Cài dependencies (nếu chưa)
-npm install
-
-# Start dev server
-npm run dev
-
-# Output:
-#   ➜  Local:   http://localhost:5173/
-```
-
-#### Step 4: Start Crawler (Thu thập dữ liệu từ Binance)
-```bash
-# Terminal 3
-cd /home/minh1234/BigData
-
-source venv/bin/activate
-
-# Chạy Crawler
-python Crawler/binance_producer.py
-
-# Output:
-# ✅ Đã kết nối Kafka (Chế độ Plaintext)
-# [SPEED] BTCUSDT   | Giá: 45230.50
-# [SPEED] ETHUSDT   | Giá: 2230.20
-```
-
-#### Step 5: Start Spark Batch Jobs (Optional)
-```bash
-# Terminal 4
-cd /home/minh1234/BigData
-
-source venv/bin/activate
-
-# Batch processing
-python spark_scripts/jobs/batch_layer.py --mode micro --offset-minutes 120
-
-# Output:
-# 🗄️  [BATCH LAYER] Khởi động — mode: micro
-# 📦 Tổng records đọc được: 5432
-```
-
-#### Step 6: Access Web
-```
-Frontend:  http://localhost:5173
-Backend:   http://localhost:8000
-API Docs:  http://localhost:8000/docs
-MinIO:     http://localhost:9001  (admin/password123)
-InfluxDB:  http://localhost:8086
-Kafka UI:  http://localhost:8081
-```
-
----
-
-### **Cách 2️⃣: Chạy trên Docker (Single Container Test)**
+Sau lenh nay, cac lenh `docker build` se build image vao Docker daemon cua Minikube. Khong can chay `minikube image load`.
 
 ```bash
-# Build backend image
-docker build -f Dockerfile.backend-k8s -t crypto-backend:latest .
-
-# Build frontend image
-docker build -f Dockerfile.frontend-k8s -t crypto-frontend:latest .
-
-# Run backend
-docker run -d \
-  --network host \
-  -e INFLUX_URL=http://localhost:8086 \
-  -e KAFKA_BROKER=localhost:9092 \
-  -p 8000:8000 \
-  crypto-backend:latest
-
-# Run frontend (nếu muốn separate)
-docker run -d \
-  --network host \
-  -p 3000:80 \
-  crypto-frontend:latest
-
-# Test
-curl http://localhost:8000/health
-curl http://localhost:3000
+docker build -f docker/Dockerfile.backend-k8s -t crypto-backend:latest .
+docker build -f docker/Dockerfile.frontend-k8s -t crypto-frontend:latest .
+docker build -f docker/Dockerfile.crawler -t crypto-crawler:latest .
+docker build -f docker/Dockerfile.spark -t crypto-spark:latest .
+docker build -f docker/Dockerfile.ml-trainer -t crypto-ml-trainer:latest .
 ```
 
----
+Hoac dung script:
 
-### **Cách 3️⃣: Chạy trên Kubernetes (Production)**
-
-#### Prerequisites
 ```bash
-# Kiểm tra Kubernetes
-kubectl cluster-info
-
-# Hoặc nếu dùng Minikube
-minikube status
-minikube start
+./build-deploy.sh all minikube-docker
 ```
 
-#### Step 1: Build & Load Images
+Chi dung cach `minikube image load` khi may du RAM:
+
 ```bash
-cd /home/minh1234/BigData
-
-# Build images
-docker build -f Dockerfile.backend-k8s -t crypto-backend:latest .
-docker build -f Dockerfile.frontend-k8s -t crypto-frontend:latest .
-
-# Load vào Minikube (nếu dùng minikube)
-minikube image load crypto-backend:latest
-minikube image load crypto-frontend:latest
+./build-deploy.sh all load
 ```
 
-#### Step 2: Deploy Infrastructure (Kafka, InfluxDB, PostgreSQL, MinIO)
+### 3. Deploy Kubernetes manifests
+
 ```bash
-# Deploy Kafka
+kubectl apply -f k8s/00-namespace.yaml
+kubectl apply -f k8s/01-configmap.yaml
+kubectl apply -f k8s/02-secret.yaml
+
+kubectl apply -f k8s/postgres.yaml
 kubectl apply -f k8s/kafka.yaml
-
-# Deploy InfluxDB
+kubectl apply -f k8s/minio.yaml
 kubectl apply -f k8s/influxdb.yaml
 
-# Deploy PostgreSQL
-kubectl apply -f k8s/postgres.yaml
+kubectl apply -f k8s/05-init-jobs.yaml
 
-# Deploy MinIO
-kubectl apply -f k8s/minio.yaml
-
-# Chờ pods ready
-kubectl get pods -A -w
-
-# Kiểm tra status
-kubectl get svc -A
+kubectl apply -f k8s/03-backend-deployment.yaml
+kubectl apply -f k8s/04-frontend-deployment.yaml
+kubectl apply -f k8s/06-crawler-deployment.yaml
+kubectl apply -f k8s/07-spark-speed-deployment.yaml
+kubectl apply -f k8s/08-spark-batch-cronjob.yaml
+kubectl apply -f k8s/09-ml-train-cronjob.yaml
 ```
 
-#### Step 3: Deploy Backend & Frontend
+### 4. Kiem tra pods/services
+
 ```bash
-# Deploy backend
-kubectl apply -f k8s/03-backend-deployment.yaml
-
-# Deploy frontend
-kubectl apply -f k8s/04-frontend-deployment.yaml
-
-# Check deployment
 kubectl get pods -n crypto-system
 kubectl get svc -n crypto-system
+kubectl get cronjob -n crypto-system
 ```
 
-#### Step 4: Port Forward để Test
-```bash
-# Terminal 1: Backend
-kubectl port-forward -n crypto-system svc/fastapi-backend 8000:8000
+Cho cac deployment san sang:
 
-# Terminal 2: Frontend
+```bash
+kubectl rollout status deployment/backend -n crypto-system
+kubectl rollout status deployment/frontend -n crypto-system
+kubectl rollout status deployment/crawler -n crypto-system
+kubectl rollout status deployment/spark-speed-layer -n crypto-system
+```
+
+### 5. Mo app
+
+```bash
+kubectl port-forward -n crypto-system svc/backend 8000:8000
 kubectl port-forward -n crypto-system svc/frontend 3000:80
-
-# Terminal 3: Test
-curl http://localhost:8000/health
-curl http://localhost:3000
 ```
 
-#### Step 5: Deploy Crawler & Spark Jobs
+Mo:
+
+- Frontend: `http://localhost:3000`
+- Backend docs: `http://localhost:8000/docs`
+- Backend health: `http://localhost:8000/health`
+- Backend ready: `http://localhost:8000/ready`
+
+### 6. Trigger batch/train thu cong khi can
+
+Batch CronJob tu chay moi 15 phut. Muon chay ngay:
+
 ```bash
-# Tạo ConfigMap cho Crawler
-kubectl create configmap crawler-env \
-  --from-literal=KAFKA_BROKER=kafka:9092 \
-  --from-literal=MINIO_ENDPOINT=http://minio:9000 \
-  -n crypto-system
-
-# Tạo Deployment cho Crawler (Job)
-kubectl create job crypto-crawler --image=crypto-crawler:latest \
-  -n crypto-system
-
-# Tạo CronJob cho Spark Batch (chạy định kỳ)
-kubectl create cronjob batch-job --image=crypto-spark:latest \
-  --schedule="0 */2 * * *" \
-  -n crypto-system
+kubectl create job -n crypto-system --from=cronjob/spark-batch-micro spark-batch-manual
 ```
 
-#### Step 6: Access Services
-```bash
-# Port forward services
-kubectl port-forward -n crypto-system svc/kafka 9092:9092
-kubectl port-forward -n crypto-system svc/influxdb 8086:8086
-kubectl port-forward -n crypto-system svc/minio 9000:9000
+ML train CronJob tu chay moi ngay 00:30 UTC. Muon train ngay:
 
-# Access
-Frontend:    http://localhost:3000
-Backend API: http://localhost:8000/docs
-MinIO:       http://localhost:9000
-InfluxDB:    http://localhost:8086
-Kafka:       localhost:9092
+```bash
+kubectl create job -n crypto-system --from=cronjob/ml-train-lstm ml-train-manual
 ```
 
----
+Sau khi train xong, restart backend de load model moi tu MinIO:
 
-## 🔍 MONITORING & DEBUGGING
-
-### View Logs
 ```bash
-# Local - Backend
-tail -f logs/backend.log
-
-# Local - Frontend (browser console F12)
-
-# Kubernetes - Backend
-kubectl logs -f deployment/fastapi-backend -n crypto-system
-
-# Kubernetes - Frontend
-kubectl logs -f deployment/frontend -n crypto-system
-
-# Kubernetes - Crawler
-kubectl logs -f pod/crypto-crawler-xxxxx -n crypto-system
+kubectl rollout restart deployment/backend -n crypto-system
 ```
 
-### Check Health Status
+### 7. Xem logs
+
 ```bash
-# Backend health
+kubectl logs -f deployment/crawler -n crypto-system
+kubectl logs -f deployment/spark-speed-layer -n crypto-system
+kubectl logs -f deployment/backend -n crypto-system
+kubectl logs -f job/spark-batch-manual -n crypto-system
+kubectl logs -f job/ml-train-manual -n crypto-system
+```
+
+## Chay Nhanh Bang Docker Compose (chi de dev local)
+
+Lenh duoc chay tu root repo:
+
+```bash
+cd /home/minh1234/BigData
+docker compose -f docker/docker-compose.yml up -d kafka minio postgres influxdb redpanda-console
+docker compose -f docker/docker-compose.yml up -d crawler spark-submit backend frontend
+```
+
+Kiem tra:
+
+```bash
+docker compose -f docker/docker-compose.yml ps
 curl http://localhost:8000/health
 curl http://localhost:8000/ready
-
-# InfluxDB
-curl http://localhost:8086/ping
-
-# Kafka
-docker exec crypto_kafka kafka-topics.sh --bootstrap-server localhost:9092 --list
-
-# MinIO
-curl http://localhost:9000/minio/health/live
 ```
 
-### Troubleshooting
-```bash
-# Kubernetes - describe pod lỗi
-kubectl describe pod <pod-name> -n crypto-system
+Dia chi dich vu:
 
-# Exec vào pod để debug
-kubectl exec -it pod/<pod-name> -n crypto-system -- /bin/bash
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:8000`
+- API docs: `http://localhost:8000/docs`
+- Kafka UI: `http://localhost:8081`
+- MinIO console: `http://localhost:9001` voi `admin/password123`
+- InfluxDB: `http://localhost:8086` voi org `crypto_org`, bucket `crypto_prices`, token `super-secret-token-12345`
 
-# Check environment variables
-kubectl exec pod/<pod-name> -n crypto-system -- env | grep KAFKA
-
-# Restart deployment
-kubectl rollout restart deployment/fastapi-backend -n crypto-system
-
-# View events
-kubectl get events -n crypto-system --sort-by='.lastTimestamp'
-```
-
----
-
-## 📊 API Endpoints
-
-### Backend (FastAPI)
-
-| Endpoint | Method | Mô tả |
-|----------|--------|-------|
-| `/health` | GET | Liveness check |
-| `/ready` | GET | Readiness check |
-| `/api/market-summary` | GET | Giá tất cả coins |
-| `/api/historical-price/{symbol}` | GET | Lịch sử giá của 1 coin |
-| `/ws/live-price/{symbol}` | WebSocket | Real-time giá stream |
-| `/docs` | GET | API Documentation (Swagger) |
-
-### Examples
-```bash
-# Market summary
-curl http://localhost:8000/api/market-summary | jq
-
-# Historical price
-curl http://localhost:8000/api/historical-price/BTCUSDT | jq
-
-# WebSocket (từ terminal hoặc postman)
-wscat -c ws://localhost:8000/ws/live-price/BTCUSDT
-```
-
----
-
-## 🗂️ File Structure
-
-```
-BigData/
-├── backend/                     # FastAPI Backend
-│   ├── main.py                 # API endpoints (✅ sửa env vars)
-│   ├── ml_service.py           # ML predictions
-│   └── requirements.txt
-│
-├── frontend/                    # React/Vite Frontend
-│   ├── src/
-│   │   ├── pages/
-│   │   │   ├── Home.jsx        # ✅ sửa API URL
-│   │   │   └── CoinDetail.jsx  # ✅ sửa API URL
-│   │   └── App.jsx
-│   ├── .env                    # Dev environment
-│   ├── .env.production         # Prod (K8s)
-│   └── vite.config.js
-│
-├── Crawler/
-│   └── binance_producer.py     # ✅ sửa KAFKA_BROKER, MINIO_ENDPOINT
-│
-├── spark_scripts/
-│   ├── config/
-│   │   └── settings.py         # ✅ sửa KAFKA_BROKER, INFLUX_URL, PG_URL
-│   ├── jobs/
-│   │   ├── speed_layer.py
-│   │   └── batch_layer.py
-│   └── ml/predictor.py
-│
-├── k8s/                        # Kubernetes manifests
-│   ├── 00-namespace.yaml
-│   ├── 01-configmap.yaml
-│   ├── 02-secret.yaml
-│   ├── 03-backend-deployment.yaml
-│   ├── 04-frontend-deployment.yaml
-│   ├── kafka.yaml
-│   ├── influxdb.yaml
-│   ├── postgres.yaml
-│   └── minio.yaml
-│
-├── docker/
-│   ├── Dockerfile.backend-k8s   # Backend cho K8s
-│   ├── Dockerfile.frontend-k8s  # Frontend cho K8s
-│   └── Dockerfile.spark
-│
-├── docker-compose.yml           # Local development
-├── .env                        # Local env (KHÔNG COMMIT!)
-├── .env.k8s                    # K8s env reference
-└── README.md                   # This file
-```
-
----
-
-## 🔧 Environment Variables
-
-### Local Development (.env)
-```bash
-# Backend
-INFLUX_URL=http://localhost:8086
-KAFKA_BROKER=localhost:9092
-MINIO_ENDPOINT=http://localhost:9000
-
-# Frontend
-VITE_API_URL=http://localhost:8000
-```
-
-### Kubernetes (.env.k8s)
-```bash
-# Backend
-INFLUX_URL=http://influxdb:8086
-KAFKA_BROKER=kafka:9092
-MINIO_ENDPOINT=http://minio:9000
-
-# Frontend
-VITE_API_URL=/api  # Proxied through Nginx
-```
-
----
-
-## ✅ Checklist Deployment
-
-- [ ] Code đã sửa (env vars, API URLs)
-- [ ] Docker images build thành công
-- [ ] Docker Compose running (local)
-- [ ] Backend API responding (`curl /health`)
-- [ ] Frontend loading (`http://localhost:5173`)
-- [ ] Crawler sending data to Kafka
-- [ ] InfluxDB receiving data
-- [ ] Spark batch jobs running
-- [ ] Kubernetes cluster ready (nếu K8s)
-- [ ] All K8s pods are Running & Ready
-- [ ] Port forwards working
-
----
-
-## 📝 Useful Commands
+Neu chi muon chay lai job batch:
 
 ```bash
-# Local
-docker-compose up/down/logs -f
-docker build/run/ps
-
-# Frontend
-npm install/run dev/build
-npm run lint
-
-# Backend
-pip install -r requirements.txt
-uvicorn main:app --reload
-
-# Kubernetes
-kubectl apply/delete -f file.yaml
-kubectl get pods/svc/ingress -n crypto-system
-kubectl logs/exec/port-forward
-kubectl describe pod <name>
-
-# Kafka (test message)
-docker exec crypto_kafka kafka-console-producer.sh \
-  --broker-list localhost:9092 \
-  --topic raw_prices
-
-# InfluxDB (query)
-curl -X POST http://localhost:8086/api/v2/query \
-  -H "Authorization: Token YOUR_TOKEN" \
-  -H "Content-type: application/vnd.flux"
+docker compose -f docker/docker-compose.yml run --rm batch-micro
+docker compose -f docker/docker-compose.yml run --rm batch-init
 ```
 
----
+## Chay Local De Dev
 
-## 🆘 Common Issues & Fixes
+Khoi dong ha tang bang Docker:
 
-| Problem | Fix |
-|---------|-----|
-| API connection refused | Check backend running, port 8000 listening |
-| CORS error | Update ALLOWED_ORIGINS in backend/main.py |
-| No data in InfluxDB | Check Crawler running, topics created |
-| Frontend blank page | Check browser console F12, network tab |
-| K8s pods not ready | `kubectl logs pod/xxx -n crypto-system` |
-| Image not found (K8s) | `minikube image load image-name:tag` |
-| Permission denied | Run with `sudo` hoặc add user to docker group |
+```bash
+cd /home/minh1234/BigData
+docker compose -f docker/docker-compose.yml up -d kafka minio postgres influxdb redpanda-console
+```
 
----
+Tao Python env va cai dependency:
 
-## 📚 Resources
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirement.txt
+```
 
-- [FastAPI Docs](https://fastapi.tiangolo.com)
-- [React Docs](https://react.dev)
-- [Kubernetes Docs](https://kubernetes.io/docs)
-- [Kafka Docs](https://kafka.apache.org/documentation)
-- [InfluxDB Docs](https://docs.influxdata.com)
-- [Apache Spark Docs](https://spark.apache.org/docs/latest)
+Chay backend:
 
----
+```bash
+export INFLUX_URL=http://localhost:8086
+export INFLUX_TOKEN=super-secret-token-12345
+export INFLUX_ORG=crypto_org
+export INFLUX_BUCKET=crypto_prices
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+```
 
-## 🎯 Next Steps
+Chay frontend:
 
-1. ✅ Fix all files (DONE - xem commits)
-2. ✅ Test locally (Run Cách 1)
-3. ✅ Deploy to Kubernetes (Run Cách 3)
-4. 📊 Monitor metrics & logs
-5. 🚀 Scale & optimize
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
----
+Chay crawler:
 
-## 📞 Support
+```bash
+source venv/bin/activate
+python3 Crawler/binance_producer.py
+```
 
-Nếu có lỗi:
-1. Kiểm tra logs: `kubectl logs -f deployment/xxx`
-2. Check configs: `kubectl get configmap/secret -o yaml`
-3. Test connectivity: `kubectl run debug --image=curlimages/curl -it --rm`
-4. Describe pods: `kubectl describe pod <name>`
+Chay speed layer local:
 
----
+```bash
+source venv/bin/activate
+export PYTHONPATH=/home/minh1234/BigData/spark_scripts
+python3 spark_scripts/jobs/speed_layer_influx.py
+```
 
-**Last Updated**: April 20, 2026
-**Status**: ✅ Production Ready
+Chay batch layer local:
+
+```bash
+source venv/bin/activate
+export PYTHONPATH=/home/minh1234/BigData
+python3 spark_scripts/jobs/batch_layer.py --mode micro --offset-minutes 120
+```
+
+## Train Model
+
+Nen train tu du lieu batch trong MinIO de dung vai tro data lake:
+
+```bash
+source venv/bin/activate
+pip install -r backend/requirements.txt
+python3 spark_scripts/ml/train_from_minio.py
+```
+
+Hoac chay bang Docker Compose:
+
+```bash
+docker compose -f docker/docker-compose.yml --profile training run --rm model-trainer-minio
+```
+
+Neu can nap du lieu lich su Binance vao InfluxDB truoc de dev nhanh:
+
+```bash
+source venv/bin/activate
+BACKFILL_DAYS=7 python3 spark_scripts/ml/backfill_history.py
+python3 spark_scripts/ml/train_model.py
+```
+
+Neu train tren server GPU khac:
+
+```bash
+python3 spark_scripts/ml/export_training_data.py
+scp spark_scripts/ml/artifacts/training_data.npz user@server:~/BigData/spark_scripts/ml/artifacts/
+# tren server
+python3 spark_scripts/ml/train_from_file.py
+```
+
+Model local mac dinh duoc luu tai `spark_scripts/ml/artifacts/model.pt`. Backend van chay khi thieu Torch/Numpy, nhung forecast se dung fallback thay vi LSTM.
+Khi train bang Docker Compose, model se duoc upload len `ml-models/lstm/model.pt`; restart backend de backend tai va load model moi.
+
+Thong so chi tiet cua tung module nam trong `PIPELINE_CONFIG.md`.
+Ke hoach bo sung Airflow nam trong `AIRFLOW_PLAN.md`.
+
+## Bien Moi Truong Quan Trong
+
+- `KAFKA_BROKER`: local `localhost:9092`, Docker `kafka:29092`, K8S `kafka:9092`.
+- `KAFKA_TOPIC_PRICES`: mac dinh `binance_live_prices`.
+- `INFLUX_URL`: local `http://localhost:8086`, Docker/K8S `http://influxdb:8086`.
+- `INFLUX_TOKEN`: mac dinh `super-secret-token-12345`.
+- `INFLUX_ORG`: `crypto_org`.
+- `INFLUX_BUCKET`: `crypto_prices`.
+- `PG_HOST`, `PG_PORT`, `PG_DB`, `PG_USER`, `PG_PASSWORD`: dung cho batch layer.
+- `MINIO_ENDPOINT`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`: dung cho crawler va batch layer.
+- `BINANCE_COINS`: danh sach coin cach nhau bang dau phay neu muon doi tap coin.
+
+## Ghi Chu Van Hanh
+
+- Lan dau chay nen cho crawler va speed layer ghi du lieu vao InfluxDB vai phut truoc khi mo dashboard.
+- Neu frontend hien bang trong, kiem tra `curl http://localhost:8000/api/market-summary`.
+- Neu `/ready` tra 503, backend dang khong ket noi duoc InfluxDB.
+- Neu train model khong du du lieu, chay `spark_scripts/ml/backfill_history.py` hoac tang thoi gian thu thap realtime.

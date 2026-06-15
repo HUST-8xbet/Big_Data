@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ml-train-lstm
+  namespace: crypto-system
+spec:
+  schedule: "30 0 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: ml-train-lstm
+            image: crypto-ml-trainer:latest
+            imagePullPolicy: Never
+            command:
+            - python
+            - spark_scripts/ml/train_from_minio.py
+            envFrom:
+            - configMapRef:
+                name: crypto-config
+            - secretRef:
+                name: backend-secrets
+            env:
+            - name: PYTHONPATH
+              value: /app
+            - name: MINIO_TRAIN_BUCKET
+              value: raw-data
+            - name: MINIO_TRAIN_PREFIX
+              value: binance/
+            - name: TRAIN_DAYS
+              value: "7"
+            - name: UPLOAD_MODEL_TO_MINIO
+              value: "1"
+            resources:
+              requests:
+                cpu: 500m
+                memory: 1Gi
+              limits:
+                cpu: "1"
+                memory: 2Gi

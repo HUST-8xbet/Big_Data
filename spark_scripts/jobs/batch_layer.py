@@ -13,7 +13,6 @@ import psycopg2 # Yêu cầu cài đặt thêm: pip install psycopg2-binary
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType, TimestampType
 
 # ── đường dẫn module ──────────────────────────────────────────────────────────
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -40,19 +39,24 @@ MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://localhost:9000")
 # ════════════════════════════════════════════════════════════════════════════
 # 1. KHỞI TẠO SPARK SESSION (Đã cập nhật Mật khẩu MinIO)
 # ════════════════════════════════════════════════════════════════════════════
-spark = SparkSession.builder \
-    .appName("Crypto_BatchLayer") \
-    .config("spark.jars.packages",
-            "org.postgresql:postgresql:42.6.0,"
-            "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
-            "org.apache.hadoop:hadoop-aws:3.3.4,"
-            "com.amazonaws:aws-java-sdk-bundle:1.12.262") \
-    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-    .config("spark.hadoop.fs.s3a.access.key", os.getenv("MINIO_ROOT_USER", "minioadmin")) \
-    .config("spark.hadoop.fs.s3a.secret.key", os.getenv("MINIO_ROOT_PASSWORD", "minioadmin123")) \
-    .config("spark.hadoop.fs.s3a.endpoint", MINIO_ENDPOINT) \
-    .config("spark.hadoop.fs.s3a.path.style.access", "true")\
-    .getOrCreate()
+builder = (
+    SparkSession.builder
+    .appName("Crypto_BatchLayer")
+    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+    .config("spark.hadoop.fs.s3a.access.key", os.getenv("MINIO_ROOT_USER", "minioadmin"))
+    .config("spark.hadoop.fs.s3a.secret.key", os.getenv("MINIO_ROOT_PASSWORD", "minioadmin123"))
+    .config("spark.hadoop.fs.s3a.endpoint", MINIO_ENDPOINT)
+    .config("spark.hadoop.fs.s3a.path.style.access", "true")
+)
+if os.getenv("SPARK_USE_PACKAGES", "0").lower() in {"1", "true", "yes"}:
+    builder = builder.config(
+        "spark.jars.packages",
+        "org.postgresql:postgresql:42.6.0,"
+        "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
+        "org.apache.hadoop:hadoop-aws:3.3.4,"
+        "com.amazonaws:aws-java-sdk-bundle:1.12.262",
+    )
+spark = builder.getOrCreate()
 
 spark.sparkContext.setLogLevel("WARN")
 print(f"🗄️  [BATCH LAYER] Khởi động — mode: {args.mode}")
@@ -88,7 +92,10 @@ parsed_df = (
         F.col("kafka_ts"),
     )
     .select("data.*", "kafka_ts")
-    .withColumn("event_time", F.to_timestamp(F.col("timestamp") / 1000))
+    .withColumn(
+        "event_time",
+        F.from_unixtime((F.col("timestamp") / 1000).cast("long")).cast("timestamp"),
+    )
     .filter(F.col("symbol").isNotNull() & F.col("price").isNotNull())
 )
 
@@ -108,7 +115,7 @@ parsed_df.cache()
 def compute_ohlcv(df, interval_minutes, interval_label):
     window_ts = (F.col("event_time").cast("long") / (interval_minutes * 60)).cast("long") * (interval_minutes * 60)
     candles = (
-        df.withColumn("window_ts", F.to_timestamp(F.lit(window_ts.cast("double"))))
+        df.withColumn("window_ts", F.from_unixtime(window_ts).cast("timestamp"))
         .groupBy("symbol", "window_ts")
         .agg(
             F.first("price").alias("open"),
@@ -138,7 +145,7 @@ ohlcv_4h  = compute_ohlcv(parsed_df, 240,  "4h")
 def compute_market_stats(df, window_minutes, label):
     window_ts = (F.col("event_time").cast("long") / (window_minutes * 60)).cast("long") * (window_minutes * 60)
     stats = (
-        df.withColumn("window_ts", F.to_timestamp(F.lit(window_ts.cast("double"))))
+        df.withColumn("window_ts", F.from_unixtime(window_ts).cast("timestamp"))
         .groupBy("symbol", "window_ts")
         .agg(
             F.sum(F.col("price") * F.col("volume")).alias("price_volume_sum"),

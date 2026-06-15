@@ -140,7 +140,7 @@ kubectl apply -f k8s/03-backend-deployment.yaml
 kubectl apply -f k8s/04-frontend-deployment.yaml
 
 # 4️⃣ Port Forward & Test
-kubectl port-forward -n crypto-system svc/fastapi-backend 8000:8000 &
+kubectl port-forward -n crypto-system svc/backend 8000:8000 &
 kubectl port-forward -n crypto-system svc/frontend 3000:80 &
 
 curl http://localhost:8000/health

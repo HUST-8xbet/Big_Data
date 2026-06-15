@@ -1,4 +1,5 @@
 from fastapi import FastAPI, WebSocket
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 import os
@@ -76,7 +77,10 @@ def readiness_check():
         influx_client.ping()
         return {"status": "ready", "influxdb": "connected"}
     except Exception as e:
-        return {"status": "not_ready", "error": str(e)}, 503
+        return JSONResponse(
+            status_code=503,
+            content={"status": "not_ready", "error": str(e)},
+        )
 
 @app.get("/api/market-summary")
 def get_market_summary():
@@ -127,18 +131,53 @@ def get_market_summary():
     return summary_data
 
 # 1. API Lấy lịch sử (Thêm {symbol} vào đường dẫn)
-@app.get("/api/historical-price/{symbol}")
-def get_historical_price(symbol: str, minutes: int = 60):
-    history_data = []
-    minutes = max(15, min(minutes, 240))  # giới hạn 15–240 phút
+# @app.get("/api/historical-price/{symbol}")
+# def get_historical_price(symbol: str, minutes: int = 60):
+#     history_data = []
+#     minutes = max(15, min(minutes, 240))  # giới hạn 15–240 phút
 
+#     query = f'''
+#         from(bucket: "{INFLUX_BUCKET}")
+#         |> range(start: -{minutes}m)
+#         |> filter(fn: (r) => r["_measurement"] == "market_data")
+#         |> filter(fn: (r) => r["symbol"] == "{symbol}")
+#         |> filter(fn: (r) => r["_field"] == "price")
+#         |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
+#         |> yield(name: "mean")
+#     '''
+#     try:
+#         tables = query_api.query(query, org=INFLUX_ORG)
+#         for table in tables:
+#             for record in table.records:
+#                 time_point = record.get_time()
+#                 real_price = record.get_value()
+#                 if real_price is None: continue
+                
+#                 update_price_buffer(symbol, real_price)
+#                 predicted = predict_future_price(my_ml_model, real_price, symbol)
+#                 history_data.append({
+#                     "time": time_point.astimezone(DISPLAY_TZ).strftime("%H:%M:%S"),
+#                     "real_price": round_price(real_price),
+#                     "predicted_price": predicted
+#                 })
+#     except Exception as e:
+#         print(f"Lỗi lấy lịch sử InfluxDB: {e}")
+#     return history_data
+
+@app.get("/api/historical-price/{symbol}")
+def get_historical_price(symbol: str, minutes: int = 60, interval: str = "1m"): # ✅ Thêm tham số interval
+    history_data = []
+    # ✅ Nới lỏng giới hạn phút để có thể xem dài hạn (ví dụ 1440 phút = 1 ngày)
+    minutes = max(15, minutes)  
+
+    # ✅ Truyền biến {interval} vào hàm aggregateWindow
     query = f'''
         from(bucket: "{INFLUX_BUCKET}")
         |> range(start: -{minutes}m)
         |> filter(fn: (r) => r["_measurement"] == "market_data")
         |> filter(fn: (r) => r["symbol"] == "{symbol}")
         |> filter(fn: (r) => r["_field"] == "price")
-        |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
+        |> aggregateWindow(every: {interval}, fn: mean, createEmpty: false)
         |> yield(name: "mean")
     '''
     try:
