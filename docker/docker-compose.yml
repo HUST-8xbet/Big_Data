@@ -174,7 +174,7 @@ services:
   # ==========================================
   spark-master:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.spark
     container_name: crypto_spark_master
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
@@ -182,7 +182,7 @@ services:
       - "7077:7077"
       - "8080:8080" # Trả về cổng 8080 quen thuộc để bạn dễ xem UI
     volumes:
-      - ./:/opt/project
+      - ../:/opt/project
     networks:
       - crypto-network
     # Bắt mạch Master xem đã thức chưa
@@ -194,7 +194,7 @@ services:
 
   spark-worker:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.spark
     container_name: crypto_spark_worker
     depends_on:
@@ -202,14 +202,14 @@ services:
         condition: service_healthy
     command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
     volumes:
-      - ./:/opt/project
+      - ../:/opt/project
     networks:
       - crypto-network
 
 
   spark-submit:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.spark
     container_name: crypto_spark_submit
     depends_on:
@@ -221,11 +221,19 @@ services:
       /opt/spark/bin/spark-submit
       --master spark://spark-master:7077
       --conf "spark.executorEnv.PYTHONPATH=/opt/project/spark_scripts"
+      --conf "spark.executorEnv.KAFKA_BROKER=kafka:29092"
+      --conf "spark.executorEnv.INFLUX_URL=http://influxdb:8086"
       /opt/project/spark_scripts/jobs/speed_layer_influx.py
     volumes:
-      - ./:/opt/project
+      - ../:/opt/project
     environment:
       - PYTHONPATH=/opt/project/spark_scripts
+      - KAFKA_BROKER=kafka:29092
+      - KAFKA_TOPIC_PRICES=binance_live_prices
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=super-secret-token-12345
+      - INFLUX_ORG=crypto_org
+      - INFLUX_BUCKET=crypto_prices
     networks:
       - crypto-network
 
@@ -236,7 +244,7 @@ services:
   # Job khởi tạo: đọc full Kafka topic → seed PostgreSQL + MinIO (chạy 1 lần)
   batch-init:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.spark
     container_name: crypto_batch_init
     depends_on:
@@ -250,7 +258,7 @@ services:
       /opt/project/spark_scripts/jobs/batch_layer.py
       --mode batch
     volumes:
-      - ./:/opt/project
+      - ../:/opt/project
     environment:
       - PYTHONPATH=/opt/project
     networks:
@@ -260,7 +268,7 @@ services:
   # Job định kỳ: micro-batch (2 giờ gần nhất), chạy mỗi 10 phút
   batch-micro:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile.spark
     container_name: crypto_batch_micro
     depends_on:
@@ -271,9 +279,73 @@ services:
     command: >
       /opt/spark/bin/spark-class org.apache.spark.deploy.rest.LaunchSubmittedApplication
     volumes:
-      - ./:/opt/project
+      - ../:/opt/project
     environment:
       - PYTHONPATH=/opt/project
     networks:
       - crypto-network
     restart: "no"
+
+  # ==========================================
+  # 6. CRAWLER — Kéo giá từ Binance → Kafka
+  # ==========================================
+  crawler:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.crawler
+    container_name: crypto_crawler
+    environment:
+      - KAFKA_BROKER=kafka:29092
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ROOT_USER=admin
+      - MINIO_ROOT_PASSWORD=password123
+    depends_on:
+      kafka:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - crypto-network
+    restart: unless-stopped
+
+  # ==========================================
+  # 7. BACKEND — FastAPI + LSTM prediction
+  # ==========================================
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    container_name: crypto_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=super-secret-token-12345
+      - INFLUX_ORG=crypto_org
+      - INFLUX_BUCKET=crypto_prices
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    networks:
+      - crypto-network
+    restart: unless-stopped
+
+  # ==========================================
+  # 8. FRONTEND — React + Nginx
+  # ==========================================
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend-k8s
+      args:
+        # Đặt SERVER_IP=<ip_server> trong file .env trước khi chạy
+        - VITE_API_URL=http://${SERVER_IP:-localhost}:8000
+        - VITE_WS_URL=ws://${SERVER_IP:-localhost}:8000
+    container_name: crypto_frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - crypto-network
+    restart: unless-stopped

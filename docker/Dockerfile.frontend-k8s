@@ -1,6 +1,12 @@
 # Build stage
 FROM node:20-alpine as builder
 
+# Nhận server IP từ docker-compose để nhúng vào bundle lúc build
+ARG VITE_API_URL=http://localhost:8000
+ARG VITE_WS_URL=ws://localhost:8000
+ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_WS_URL=$VITE_WS_URL
+
 WORKDIR /app
 
 COPY frontend/package.json frontend/package-lock.json ./
@@ -9,7 +15,6 @@ RUN npm ci
 
 COPY frontend/ .
 
-# ✅ Build ứng dụng React
 RUN npm run build
 
 # Runtime stage - Dùng nginx để serve static files

@@ -36,6 +36,4 @@ RUN curl -L -o $SPARK_JARS_DIR/hadoop-aws-3.3.4.jar https://repo1.maven.org/mave
 USER root
 # Copy mã nguồn và cấu hình vào đúng folder làm việc của container
 COPY spark_scripts/ /opt/spark/spark_scripts/
-COPY config/ /opt/spark/config/
-COPY utils/ /opt/spark/utils/
 USER spark

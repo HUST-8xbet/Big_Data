@@ -3,7 +3,7 @@ import os
 # ✅ Kafka Config (Support Kubernetes DNS)
 # Local: localhost:9092, K8s: kafka:9092
 KAFKA_BROKER = os.getenv('KAFKA_BROKER', 'localhost:9092')
-KAFKA_TOPIC_PRICES = os.getenv('KAFKA_TOPIC_PRICES', 'raw_prices')
+KAFKA_TOPIC_PRICES = os.getenv('KAFKA_TOPIC_PRICES', 'binance_live_prices')
 KAFKA_TOPIC_ALERTS = os.getenv('KAFKA_TOPIC_ALERTS', 'user_alerts_topic')
 
 # ✅ InfluxDB Config (Support Kubernetes DNS)
@@ -19,7 +19,7 @@ PG_HOST = os.getenv('PG_HOST', 'localhost')
 PG_PORT = os.getenv('PG_PORT', '5432')
 PG_DB = os.getenv('PG_DB', 'cryptodb')
 PG_USER = os.getenv('PG_USER', 'admin')
-PG_PASSWORD = os.getenv('PG_PASSWORD', 'admin123')
+PG_PASSWORD = os.getenv('PG_PASSWORD', 'password123')
 PG_DRIVER = os.getenv('PG_DRIVER', 'org.postgresql.Driver')
 
 # JDBC URL format
@@ -27,5 +27,5 @@ PG_URL = f"jdbc:postgresql://{PG_HOST}:{PG_PORT}/{PG_DB}"
 # ✅ MinIO Config
 # Local: localhost:9000, K8s: minio-service:9000
 MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'http://localhost:9000')
-MINIO_ROOT_USER = os.getenv('MINIO_ROOT_USER', 'minioadmin')
-MINIO_ROOT_PASSWORD = os.getenv('MINIO_ROOT_PASSWORD', 'minioadmin123')
+MINIO_ROOT_USER = os.getenv('MINIO_ROOT_USER', 'admin')
+MINIO_ROOT_PASSWORD = os.getenv('MINIO_ROOT_PASSWORD', 'password123')

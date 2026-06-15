@@ -1,13 +1,23 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, Brush, ReferenceLine,
 } from 'recharts';
 import { Spin, Select, Tag, Typography } from 'antd';
+// import ArrowLeftOutlined from '@ant-design/icons/ArrowLeftOutlined';
+// import SwapOutlined from '@ant-design/icons/SwapOutlined';
+// import ThunderboltOutlined from '@ant-design/icons/ThunderboltOutlined';
+// import RiseOutlined from '@ant-design/icons/RiseOutlined';
+// import FallOutlined from '@ant-design/icons/FallOutlined';
+// import InfoCircleOutlined from '@ant-design/icons/InfoCircleOutlined';
 import {
-  ArrowLeftOutlined, SwapOutlined, ThunderboltOutlined,
-  RiseOutlined, FallOutlined, InfoCircleOutlined,
+  ArrowLeftOutlined,
+  SwapOutlined,
+  ThunderboltOutlined,
+  RiseOutlined,
+  FallOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons';
 import '../styles/CoinDetail.css';
 
@@ -16,8 +26,7 @@ const { Option } = Select;
 
 // ── API base ──────────────────────────────────────────────────────────────────
 // ✅ Dynamic API URL - support cả localhost (dev) và Kubernetes
-const API = process.env.VITE_API_URL || 'http://localhost:8000';
-const WS_API = (process.env.VITE_WS_URL || 'ws') + '://localhost:8000';
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 // ── TIME RANGE options (minutes) ─────────────────────────────────────────────
 const TIME_RANGES = [
@@ -31,7 +40,17 @@ const TIME_RANGES = [
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function formatPrice(v) {
   if (v == null) return '–';
-  return '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const value = Number(v);
+  const abs = Math.abs(value);
+  const fractionDigits =
+    abs >= 100 ? 2 :
+    abs >= 1 ? 4 :
+    abs >= 0.01 ? 6 :
+    8;
+  return '$' + value.toLocaleString('en-US', {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  });
 }
 
 function calcChange(p) {
@@ -42,12 +61,6 @@ function calcChange(p) {
   const icon  = pct >= 0 ? <RiseOutlined /> : <FallOutlined />;
   const color = pct > 0 ? '#52c41a' : pct < 0 ? '#ff4d4f' : '#9ca3af';
   return { pct, icon, color };
-}
-
-function fmtTime(isoStr) {
-  if (!isoStr) return '';
-  const d = new Date(isoStr);
-  return d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 // ── Custom Tooltip ────────────────────────────────────────────────────────────
@@ -81,17 +94,14 @@ export default function CoinDetail() {
   // Dữ liệu
   const [rawData,   setRawData]   = useState([]);   // toàn bộ dữ liệu gốc
   const [chartData, setChartData] = useState([]);   // dữ liệu hiển thị (theo time range)
+  const [forecast,  setForecast]  = useState([]);   // dự đoán tương lai (sau đường "Bây giờ")
   const [loading,   setLoading]   = useState(true);
   const [timeRange, setTimeRange] = useState(60);    // phút
 
-  // Scrub / pan state
-  const [scrubIndex, setScrubIndex] = useState(null); // index đang xem (null = live)
+  // History mode: user đã kéo Brush ra khỏi live
+  const [isHistoryMode, setIsHistoryMode] = useState(false);
 
-  // WebSocket
-  const [wsConnected, setWsConnected] = useState(false);
-  const wsRef        = useRef(null);
-  const reconnectTmr = useRef(null);
-  const isMounted    = useRef(true);
+  const [liveConnected, setLiveConnected] = useState(false);
 
   // ── 1. Lấy danh sách coin từ market-summary ──────────────────────────────
   useEffect(() => {
@@ -102,87 +112,114 @@ export default function CoinDetail() {
   }, []);
 
   // ── 2. Fetch lịch sử ──────────────────────────────────────────────────────
-  const fetchHistory = useCallback((sym) => {
-    setLoading(true);
-    setRawData([]);
-    setChartData([]);
-    setScrubIndex(null);
+  // const fetchHistory = useCallback((sym, minutes, { silent = false } = {}) => {
+  //   if (!silent) {
+  //     setLoading(true);
+  //     setRawData([]);
+  //     setChartData([]);
+  //     setIsHistoryMode(false);
+  //   }
 
-    fetch(`${API}/api/historical-price/${sym}`)
+  //   fetch(`${API}/api/historical-price/${sym}?minutes=${minutes}`)
+  //     .then(r => r.json())
+  //     .then(data => {
+  //       if (!data.length) {
+  //         setLoading(false);
+  //         setLiveConnected(false);
+  //         return;
+  //       }
+  //       const enriched = data.map((d, i) => ({
+  //         ...d,
+  //         _index: i,
+  //         displayTime: d.time,
+  //       }));
+  //       setRawData(enriched);
+  //       setLiveConnected(true);
+  //       setLoading(false);
+  //     })
+  //     .catch(err => {
+  //       console.error('Lỗi fetch lịch sử:', err);
+  //       setLiveConnected(false);
+  //       setLoading(false);
+  //     });
+  // }, []);
+  const fetchHistory = useCallback((sym, minutes, { silent = false } = {}) => {
+    if (!silent) {
+      setLoading(true);
+      setRawData([]);
+      setChartData([]);
+      setIsHistoryMode(false);
+    }
+
+    // ✅ Thêm logic: Tự động tính toán độ nén (interval) dựa vào số phút muốn xem
+    let interval = '1m'; // Mặc định xem 15p, 30p thì lấy nến 1 phút
+    if (minutes >= 240) interval = '5m';      // Nếu xem 4 giờ -> gộp thành nến 5 phút
+    else if (minutes >= 120) interval = '3m'; // Nếu xem 2 giờ -> gộp thành nến 3 phút
+    else if (minutes >= 60) interval = '2m';  // Nếu xem 1 giờ -> gộp thành nến 2 phút
+
+    // ✅ Bổ sung tham số &interval=... vào URL API
+    fetch(`${API}/api/historical-price/${sym}?minutes=${minutes}&interval=${interval}`)
       .then(r => r.json())
       .then(data => {
-        if (!data.length) { setLoading(false); return; }
-        // Chuyển "HH:MM:SS" → timestamp để sort được
+        if (!data.length) {
+          setLoading(false);
+          setLiveConnected(false);
+          return;
+        }
         const enriched = data.map((d, i) => ({
           ...d,
           _index: i,
           displayTime: d.time,
         }));
         setRawData(enriched);
+        setLiveConnected(true);
         setLoading(false);
       })
       .catch(err => {
         console.error('Lỗi fetch lịch sử:', err);
+        setLiveConnected(false);
         setLoading(false);
       });
   }, []);
 
-  useEffect(() => { fetchHistory(coin); }, [coin, fetchHistory]);
+  useEffect(() => { fetchHistory(coin, timeRange); }, [coin, timeRange, fetchHistory]);
 
-  // ── 3. WebSocket ──────────────────────────────────────────────────────────
-  const connectWs = useCallback((sym) => {
-    if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
+  // Poll nến 1 phút. Không clear chart để tránh nhấp nháy/giật viewport.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (!isHistoryMode) {
+        fetchHistory(coin, timeRange, { silent: true });
+      }
+    }, 60000);
+    return () => clearInterval(timer);
+  }, [coin, timeRange, isHistoryMode, fetchHistory]);
 
-    const ws = new WebSocket(`${WS_API}/ws/live-price/${sym}`);
-    wsRef.current = ws;
-
-    ws.onopen = () => { if (isMounted.current) setWsConnected(true); };
-
-    ws.onmessage = (evt) => {
-      if (!isMounted.current) return;
-      const pt = JSON.parse(evt.data);
-      setRawData(prev => {
-        if (!prev.length) return prev;
-        const last = prev[prev.length - 1];
-        const newPt = {
-          ...pt,
-          _index: last._index + 1,
-          displayTime: pt.time,
-        };
-        const next = [...prev, newPt];
-        // Giới hạn raw data ≤ 2000 điểm
-        return next.length > 2000 ? next.slice(next.length - 2000) : next;
-      });
-    };
-
-    ws.onerror = () => {};
-    ws.onclose = () => {
-      if (!isMounted.current) return;
-      setWsConnected(false);
-      // Tự reconnect sau 3s
-      reconnectTmr.current = setTimeout(() => connectWs(sym), 3000);
-    };
+  // ── 2b. Fetch dự đoán tương lai (sau đường "Bây giờ"), refresh mỗi 30s ────
+  const fetchForecast = useCallback((sym) => {
+    fetch(`${API}/api/forecast/${sym}?steps=15`)
+      .then(r => r.json())
+      .then(data => {
+        setForecast(data.map(d => ({
+          displayTime: d.time,
+          predicted_price: d.predicted_price,
+          isAnchor: Boolean(d.anchor),
+          isForecast: true,
+        })));
+      })
+      .catch(() => setForecast([]));
   }, []);
 
   useEffect(() => {
-    isMounted.current = true;
-    connectWs(coin);
-    return () => {
-      isMounted.current = false;
-      clearTimeout(reconnectTmr.current);
-      if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
-    };
-  }, [coin, connectWs]);
+    setForecast([]);
+    fetchForecast(coin);
+    const timer = setInterval(() => fetchForecast(coin), 60000);
+    return () => clearInterval(timer);
+  }, [coin, fetchForecast]);
 
-  // ── 4. Lọc chartData theo timeRange ──────────────────────────────────────
+  // ── 4. rawData → chartData (API đã trả đúng range, không cần slice) ──────
   useEffect(() => {
-    if (!rawData.length) { setChartData([]); return; }
-    const points = timeRange * 60 / 2; // mỗi ~2s 1 điểm
-    const sliced = rawData.slice(-points);
-    setChartData(sliced);
-    // Khi đổi range → thoát scrub, về live
-    setScrubIndex(null);
-  }, [rawData, timeRange]);
+    setChartData(rawData);
+  }, [rawData]);
 
   // ── 5. Stats cards ───────────────────────────────────────────────────────
   const stats = calcChange(chartData);
@@ -190,16 +227,35 @@ export default function CoinDetail() {
   const high = prices.length ? Math.max(...prices) : null;
   const low  = prices.length ? Math.min(...prices) : null;
 
-  // ── 6. Scrub handler (ký hiệu scrubIndex = null → live) ─────────────────
-  const isLive = scrubIndex === null;
-  // Trong scrub mode, dùng chartData trực tiếp (không cắt theo timeRange nữa)
-  const displayData = isLive
-    ? chartData
-    : rawData.slice(Math.max(0, scrubIndex - 300), scrubIndex + 1);
+  // ── 6. Display data — lịch sử + dự đoán tương lai sau đường "Bây giờ" ─────
+  const isLive = !isHistoryMode;
+  const currentPrice = chartData.length ? chartData[chartData.length - 1].real_price : null;
+  const nowTime = chartData.length ? chartData[chartData.length - 1].displayTime : null;
+  const futureForecast = useMemo(
+    () => (forecast[0]?.isAnchor ? forecast.slice(1) : forecast),
+    [forecast]
+  );
+  const historicalDisplayData = useMemo(() => chartData.map((point, index) => ({
+    ...point,
+    // Historical one-step predictions are useful for debugging, but visually
+    // they make the forecast line look like it has already predicted the past.
+    predicted_price: index === chartData.length - 1 && forecast.length > 0
+      ? point.real_price
+      : null,
+  })), [chartData, forecast.length]);
+  const displayData = useMemo(
+    () => (chartData.length ? [...historicalDisplayData, ...futureForecast] : chartData),
+    [chartData, historicalDisplayData, futureForecast]
+  );
 
-  const currentPrice = isLive
-    ? (chartData.length ? chartData[chartData.length - 1].real_price : null)
-    : (scrubIndex != null && displayData.length ? displayData[displayData.length - 1].real_price : null);
+  const yDomain = useMemo(() => {
+    const values = displayData.flatMap(d => [d.real_price, d.predicted_price]).filter(v => v != null);
+    if (!values.length) return ['auto', 'auto'];
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const pad = Math.max((max - min) * 0.08, Math.abs(max || 1) * 0.0005);
+    return [min - pad, max + pad];
+  }, [displayData]);
 
   return (
     <div className="detail-page">
@@ -230,8 +286,8 @@ export default function CoinDetail() {
         </div>
 
         <div className="header-status">
-          <Tag color={wsConnected ? 'green' : 'red'} icon={<ThunderboltOutlined />}>
-            {wsConnected ? 'WS: Online' : 'WS: Offline'}
+          <Tag color={liveConnected ? 'green' : 'red'} icon={<ThunderboltOutlined />}>
+            {liveConnected ? 'Live: On' : 'Live: Syncing'}
           </Tag>
         </div>
       </header>
@@ -271,7 +327,7 @@ export default function CoinDetail() {
               <button
                 key={tr.value}
                 className={`range-btn ${timeRange === tr.value && isLive ? 'active' : ''}`}
-                onClick={() => { setTimeRange(tr.value); setScrubIndex(null); }}
+                onClick={() => setTimeRange(tr.value)}
               >
                 {tr.label}
               </button>
@@ -279,7 +335,7 @@ export default function CoinDetail() {
           </div>
 
           {!isLive && (
-            <button className="btn-live-hint" onClick={() => setScrubIndex(null)}>
+            <button className="btn-live-hint" onClick={() => setIsHistoryMode(false)}>
               ← Quay về Live
             </button>
           )}
@@ -299,15 +355,7 @@ export default function CoinDetail() {
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={displayData}
-                onMouseMove={(e) => {
-                  if (e && e.activeTooltipIndex != null) {
-                    setScrubIndex(e.activeTooltipIndex + (isLive ? Math.max(0, chartData.length - displayData.length) : 0));
-                  }
-                }}
-                onMouseLeave={() => { if (isLive) setScrubIndex(null); }}
-              >
+              <LineChart data={displayData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                 <XAxis
                   dataKey="displayTime"
@@ -317,7 +365,7 @@ export default function CoinDetail() {
                   interval="preserveStartEnd"
                 />
                 <YAxis
-                  domain={['auto', 'auto']}
+                  domain={yDomain}
                   tick={{ fill: '#9ca3af', fontSize: 11 }}
                   tickLine={false}
                   axisLine={false}
@@ -325,6 +373,23 @@ export default function CoinDetail() {
                   width={90}
                 />
                 <Tooltip content={<CustomTooltip />} />
+
+                {/* Đường kẻ dọc "Bây giờ" — bên phải là dự đoán tương lai */}
+                {nowTime && forecast.length > 0 && (
+                  <ReferenceLine
+                    x={nowTime}
+                    stroke="#ffd700"
+                    strokeDasharray="4 4"
+                    strokeWidth={1.5}
+                    label={{
+                      value: '◀ Bây giờ | Dự đoán ▶',
+                      position: 'insideTopRight',
+                      fill: '#ffd700',
+                      fontSize: 11,
+                      fontWeight: 600,
+                    }}
+                  />
+                )}
 
                 {/* Đường giá thực tế */}
                 <Line
@@ -351,15 +416,22 @@ export default function CoinDetail() {
                   activeDot={{ r: 4, fill: '#ff6b6b', strokeWidth: 0 }}
                 />
 
-                {/* Brush — kéo thả để xem quá khứ */}
-                <Brush
-                  dataKey="displayTime"
-                  height={28}
-                  stroke="rgba(255,255,255,0.15)"
-                  fill="#1e2230"
-                  travellerWidth={8}
-                  startIndex={Math.max(0, displayData.length - 120)}
-                />
+                {/* Brush — kéo thả để xem quá khứ, Recharts tự xử lý zoom */}
+                {displayData.length > 10 && (
+                  <Brush
+                    dataKey="displayTime"
+                    height={28}
+                    stroke="rgba(255,255,255,0.15)"
+                    fill="#1e2230"
+                    travellerWidth={8}
+                    onChange={(state) => {
+                      if (!state) return;
+                      // Nếu end chưa đến cuối → history mode
+                      const atEnd = state.endIndex >= displayData.length - 1;
+                      setIsHistoryMode(!atEnd);
+                    }}
+                  />
+                )}
               </LineChart>
             </ResponsiveContainer>
           )}
