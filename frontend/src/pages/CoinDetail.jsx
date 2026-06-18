@@ -1,80 +1,96 @@
-import { useParams, useNavigate } from 'react-router-dom';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer, Brush, ReferenceLine,
+  Brush,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from 'recharts';
-import { Spin, Select, Tag, Typography } from 'antd';
-// import ArrowLeftOutlined from '@ant-design/icons/ArrowLeftOutlined';
-// import SwapOutlined from '@ant-design/icons/SwapOutlined';
-// import ThunderboltOutlined from '@ant-design/icons/ThunderboltOutlined';
-// import RiseOutlined from '@ant-design/icons/RiseOutlined';
-// import FallOutlined from '@ant-design/icons/FallOutlined';
-// import InfoCircleOutlined from '@ant-design/icons/InfoCircleOutlined';
+import { Select, Spin, Tag, Typography } from 'antd';
 import {
   ArrowLeftOutlined,
-  SwapOutlined,
-  ThunderboltOutlined,
-  RiseOutlined,
   FallOutlined,
   InfoCircleOutlined,
+  RiseOutlined,
+  SwapOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 import '../styles/CoinDetail.css';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 const { Option } = Select;
 
-// ── API base ──────────────────────────────────────────────────────────────────
-// ✅ Dynamic API URL - support cả localhost (dev) và Kubernetes
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// ── Configuration ────────────────────────────────────────────────────────────
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-// ── TIME RANGE options (minutes) ─────────────────────────────────────────────
+// ── Time ranges (minutes) ────────────────────────────────────────────────────
 const TIME_RANGES = [
   { label: '15 phút', value: 15 },
   { label: '30 phút', value: 30 },
-  { label: '1 giờ',   value: 60  },
-  { label: '2 giờ',   value: 120 },
-  { label: '4 giờ',   value: 240 },
+  { label: '1 giờ', value: 60 },
+  { label: '2 giờ', value: 120 },
+  { label: '4 giờ', value: 240 },
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-function formatPrice(v) {
-  if (v == null) return '–';
-  const value = Number(v);
-  const abs = Math.abs(value);
+function formatPrice(price) {
+  if (price == null) return '–';
+
+  const numericPrice = Number(price);
+  const absolutePrice = Math.abs(numericPrice);
   const fractionDigits =
-    abs >= 100 ? 2 :
-    abs >= 1 ? 4 :
-    abs >= 0.01 ? 6 :
+    absolutePrice >= 100 ? 2 :
+    absolutePrice >= 1 ? 4 :
+    absolutePrice >= 0.01 ? 6 :
     8;
-  return '$' + value.toLocaleString('en-US', {
+
+  return '$' + numericPrice.toLocaleString('en-US', {
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
   });
 }
 
-function calcChange(p) {
-  if (!p || p.length < 2) return { pct: 0, icon: null, color: '#9ca3af' };
-  const first = p[0].real_price;
-  const last  = p[p.length - 1].real_price;
-  const pct   = ((last - first) / first) * 100;
-  const icon  = pct >= 0 ? <RiseOutlined /> : <FallOutlined />;
-  const color = pct > 0 ? '#52c41a' : pct < 0 ? '#ff4d4f' : '#9ca3af';
-  return { pct, icon, color };
+function calculatePriceChange(priceData) {
+  if (!priceData || priceData.length < 2) {
+    return { pct: 0, icon: null, color: '#9ca3af' };
+  }
+
+  const firstPrice = priceData[0].real_price;
+  const latestPrice = priceData[priceData.length - 1].real_price;
+  const percentage = ((latestPrice - firstPrice) / firstPrice) * 100;
+  const icon = percentage >= 0 ? <RiseOutlined /> : <FallOutlined />;
+  const color =
+    percentage > 0 ? '#52c41a' :
+    percentage < 0 ? '#ff4d4f' :
+    '#9ca3af';
+
+  return { pct: percentage, icon, color };
 }
 
 // ── Custom Tooltip ────────────────────────────────────────────────────────────
 function CustomTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
+
   return (
     <div className="chart-tooltip">
       <div className="tooltip-time">{label}</div>
-      {payload.map((p) => (
-        <div key={p.dataKey} className="tooltip-row">
-          <span className="tooltip-dot" style={{ background: p.color }} />
-          <span className="tooltip-label">{p.name}</span>
-          <span className="tooltip-value" style={{ color: p.color }}>
-            {formatPrice(p.value)}
+      {payload.map((dataPoint) => (
+        <div key={dataPoint.dataKey} className="tooltip-row">
+          <span
+            className="tooltip-dot"
+            style={{ background: dataPoint.color }}
+          />
+          <span className="tooltip-label">{dataPoint.name}</span>
+          <span
+            className="tooltip-value"
+            style={{ color: dataPoint.color }}
+          >
+            {formatPrice(dataPoint.value)}
           </span>
         </div>
       ))}
@@ -84,177 +100,199 @@ function CustomTooltip({ active, payload, label }) {
 
 // ── CoinDetail Component ──────────────────────────────────────────────────────
 export default function CoinDetail() {
-  const { symbol: urlSymbol } = useParams();
+  const { symbol: routeSymbol } = useParams();
   const navigate = useNavigate();
 
   // Đảm bảo symbol luôn viết hoa (VD: "btc" → "BTC")
-  const [coin, setCoin]           = useState(urlSymbol ? urlSymbol.toUpperCase() : 'BTCUSDT');
-  const [availableCoins, setAvailableCoins] = useState([]);
+  const [selectedSymbol, setSelectedSymbol] = useState(
+    routeSymbol ? routeSymbol.toUpperCase() : 'BTCUSDT',
+  );
+  const [availableSymbols, setAvailableSymbols] = useState([]);
 
   // Dữ liệu
-  const [rawData,   setRawData]   = useState([]);   // toàn bộ dữ liệu gốc
-  const [chartData, setChartData] = useState([]);   // dữ liệu hiển thị (theo time range)
-  const [forecast,  setForecast]  = useState([]);   // dự đoán tương lai (sau đường "Bây giờ")
-  const [loading,   setLoading]   = useState(true);
-  const [timeRange, setTimeRange] = useState(60);    // phút
+  const [rawPriceData, setRawPriceData] = useState([]);
+  const [chartData, setChartData] = useState([]);
+  const [forecastData, setForecastData] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [selectedTimeRange, setSelectedTimeRange] = useState(60);
 
-  // History mode: user đã kéo Brush ra khỏi live
+  // Chế độ lịch sử được bật khi người dùng kéo Brush khỏi điểm dữ liệu mới nhất.
   const [isHistoryMode, setIsHistoryMode] = useState(false);
-
-  const [liveConnected, setLiveConnected] = useState(false);
+  const [isLiveConnected, setIsLiveConnected] = useState(false);
 
   // ── 1. Lấy danh sách coin từ market-summary ──────────────────────────────
   useEffect(() => {
-    fetch(`${API}/api/market-summary`)
-      .then(r => r.json())
-      .then(data => setAvailableCoins(data.map(d => d.id)))
+    fetch(`${API_BASE_URL}/api/market-summary`)
+      .then(response => response.json())
+      .then(marketData => setAvailableSymbols(marketData.map(coin => coin.id)))
       .catch(() => {});
   }, []);
 
   // ── 2. Fetch lịch sử ──────────────────────────────────────────────────────
-  // const fetchHistory = useCallback((sym, minutes, { silent = false } = {}) => {
-  //   if (!silent) {
-  //     setLoading(true);
-  //     setRawData([]);
-  //     setChartData([]);
-  //     setIsHistoryMode(false);
-  //   }
-
-  //   fetch(`${API}/api/historical-price/${sym}?minutes=${minutes}`)
-  //     .then(r => r.json())
-  //     .then(data => {
-  //       if (!data.length) {
-  //         setLoading(false);
-  //         setLiveConnected(false);
-  //         return;
-  //       }
-  //       const enriched = data.map((d, i) => ({
-  //         ...d,
-  //         _index: i,
-  //         displayTime: d.time,
-  //       }));
-  //       setRawData(enriched);
-  //       setLiveConnected(true);
-  //       setLoading(false);
-  //     })
-  //     .catch(err => {
-  //       console.error('Lỗi fetch lịch sử:', err);
-  //       setLiveConnected(false);
-  //       setLoading(false);
-  //     });
-  // }, []);
-  const fetchHistory = useCallback((sym, minutes, { silent = false } = {}) => {
+  const fetchPriceHistory = useCallback((
+    symbol,
+    minutes,
+    { silent = false } = {},
+  ) => {
     if (!silent) {
-      setLoading(true);
-      setRawData([]);
+      setIsLoading(true);
+      setRawPriceData([]);
       setChartData([]);
       setIsHistoryMode(false);
     }
 
-    // ✅ Thêm logic: Tự động tính toán độ nén (interval) dựa vào số phút muốn xem
-    let interval = '1m'; // Mặc định xem 15p, 30p thì lấy nến 1 phút
-    if (minutes >= 240) interval = '5m';      // Nếu xem 4 giờ -> gộp thành nến 5 phút
-    else if (minutes >= 120) interval = '3m'; // Nếu xem 2 giờ -> gộp thành nến 3 phút
-    else if (minutes >= 60) interval = '2m';  // Nếu xem 1 giờ -> gộp thành nến 2 phút
+    let aggregationInterval = '1m';
+    if (minutes >= 240) aggregationInterval = '5m';
+    else if (minutes >= 120) aggregationInterval = '3m';
+    else if (minutes >= 60) aggregationInterval = '2m';
 
-    // ✅ Bổ sung tham số &interval=... vào URL API
-    fetch(`${API}/api/historical-price/${sym}?minutes=${minutes}&interval=${interval}`)
-      .then(r => r.json())
-      .then(data => {
-        if (!data.length) {
-          setLoading(false);
-          setLiveConnected(false);
+    fetch(`${API_BASE_URL}/api/historical-price/${symbol}?minutes=${minutes}&interval=${aggregationInterval}`)
+      .then(response => response.json())
+      .then(historyData => {
+        if (!historyData.length) {
+          setIsLoading(false);
+          setIsLiveConnected(false);
           return;
         }
-        const enriched = data.map((d, i) => ({
-          ...d,
-          _index: i,
-          displayTime: d.time,
+
+        const enrichedHistoryData = historyData.map((dataPoint, index) => ({
+          ...dataPoint,
+          _index: index,
+          displayTime: dataPoint.time,
         }));
-        setRawData(enriched);
-        setLiveConnected(true);
-        setLoading(false);
+
+        setRawPriceData(enrichedHistoryData);
+        setIsLiveConnected(true);
+        setIsLoading(false);
       })
-      .catch(err => {
-        console.error('Lỗi fetch lịch sử:', err);
-        setLiveConnected(false);
-        setLoading(false);
+      .catch(error => {
+        console.error('Lỗi fetch lịch sử:', error);
+        setIsLiveConnected(false);
+        setIsLoading(false);
       });
   }, []);
 
-  useEffect(() => { fetchHistory(coin, timeRange); }, [coin, timeRange, fetchHistory]);
+  useEffect(() => {
+    fetchPriceHistory(selectedSymbol, selectedTimeRange);
+  }, [selectedSymbol, selectedTimeRange, fetchPriceHistory]);
 
   // Poll nến 1 phút. Không clear chart để tránh nhấp nháy/giật viewport.
   useEffect(() => {
-    const timer = setInterval(() => {
+    const historyPollingIntervalId = setInterval(() => {
       if (!isHistoryMode) {
-        fetchHistory(coin, timeRange, { silent: true });
+        fetchPriceHistory(selectedSymbol, selectedTimeRange, { silent: true });
       }
     }, 60000);
-    return () => clearInterval(timer);
-  }, [coin, timeRange, isHistoryMode, fetchHistory]);
 
-  // ── 2b. Fetch dự đoán tương lai (sau đường "Bây giờ"), refresh mỗi 30s ────
-  const fetchForecast = useCallback((sym) => {
-    fetch(`${API}/api/forecast/${sym}?steps=15`)
-      .then(r => r.json())
-      .then(data => {
-        setForecast(data.map(d => ({
-          displayTime: d.time,
-          predicted_price: d.predicted_price,
-          isAnchor: Boolean(d.anchor),
+    return () => clearInterval(historyPollingIntervalId);
+  }, [
+    selectedSymbol,
+    selectedTimeRange,
+    isHistoryMode,
+    fetchPriceHistory,
+  ]);
+
+  // ── 3. Fetch dự đoán tương lai, làm mới mỗi 60 giây ───────────────────────
+  const fetchPriceForecast = useCallback((symbol) => {
+    fetch(`${API_BASE_URL}/api/forecast/${symbol}?steps=15`)
+      .then(response => response.json())
+      .then(forecastResponse => {
+        setForecastData(forecastResponse.map(dataPoint => ({
+          displayTime: dataPoint.time,
+          predicted_price: dataPoint.predicted_price,
+          isAnchor: Boolean(dataPoint.anchor),
           isForecast: true,
         })));
       })
-      .catch(() => setForecast([]));
+      .catch(() => setForecastData([]));
   }, []);
 
   useEffect(() => {
-    setForecast([]);
-    fetchForecast(coin);
-    const timer = setInterval(() => fetchForecast(coin), 60000);
-    return () => clearInterval(timer);
-  }, [coin, fetchForecast]);
+    setForecastData([]);
+    fetchPriceForecast(selectedSymbol);
 
-  // ── 4. rawData → chartData (API đã trả đúng range, không cần slice) ──────
+    const forecastPollingIntervalId = setInterval(
+      () => fetchPriceForecast(selectedSymbol),
+      60000,
+    );
+
+    return () => clearInterval(forecastPollingIntervalId);
+  }, [selectedSymbol, fetchPriceForecast]);
+
+  // Giữ riêng hai lớp state để bảo toàn vòng đời render hiện tại.
   useEffect(() => {
-    setChartData(rawData);
-  }, [rawData]);
+    setChartData(rawPriceData);
+  }, [rawPriceData]);
 
-  // ── 5. Stats cards ───────────────────────────────────────────────────────
-  const stats = calcChange(chartData);
-  const prices = chartData.map(d => d.real_price).filter(Boolean);
-  const high = prices.length ? Math.max(...prices) : null;
-  const low  = prices.length ? Math.min(...prices) : null;
+  // ── Derived chart values ──────────────────────────────────────────────────
+  const priceChange = calculatePriceChange(chartData);
+  const historicalPrices = chartData
+    .map(dataPoint => dataPoint.real_price)
+    .filter(Boolean);
+  const highestPrice = historicalPrices.length
+    ? Math.max(...historicalPrices)
+    : null;
+  const lowestPrice = historicalPrices.length
+    ? Math.min(...historicalPrices)
+    : null;
 
-  // ── 6. Display data — lịch sử + dự đoán tương lai sau đường "Bây giờ" ─────
+  // Lịch sử và dự đoán tương lai được nối tại điểm dữ liệu mới nhất.
   const isLive = !isHistoryMode;
-  const currentPrice = chartData.length ? chartData[chartData.length - 1].real_price : null;
-  const nowTime = chartData.length ? chartData[chartData.length - 1].displayTime : null;
-  const futureForecast = useMemo(
-    () => (forecast[0]?.isAnchor ? forecast.slice(1) : forecast),
-    [forecast]
-  );
-  const historicalDisplayData = useMemo(() => chartData.map((point, index) => ({
-    ...point,
-    // Historical one-step predictions are useful for debugging, but visually
-    // they make the forecast line look like it has already predicted the past.
-    predicted_price: index === chartData.length - 1 && forecast.length > 0
-      ? point.real_price
-      : null,
-  })), [chartData, forecast.length]);
-  const displayData = useMemo(
-    () => (chartData.length ? [...historicalDisplayData, ...futureForecast] : chartData),
-    [chartData, historicalDisplayData, futureForecast]
+  const currentPrice = chartData.length
+    ? chartData[chartData.length - 1].real_price
+    : null;
+  const currentTime = chartData.length
+    ? chartData[chartData.length - 1].displayTime
+    : null;
+  const futureForecastData = useMemo(
+    () => (
+      forecastData[0]?.isAnchor ? forecastData.slice(1) : forecastData
+    ),
+    [forecastData],
   );
 
-  const yDomain = useMemo(() => {
-    const values = displayData.flatMap(d => [d.real_price, d.predicted_price]).filter(v => v != null);
-    if (!values.length) return ['auto', 'auto'];
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const pad = Math.max((max - min) * 0.08, Math.abs(max || 1) * 0.0005);
-    return [min - pad, max + pad];
+  const historicalDisplayData = useMemo(
+    () => chartData.map((dataPoint, index) => ({
+      ...dataPoint,
+      // Chỉ nối đường dự đoán vào điểm giá thực tế cuối cùng.
+      predicted_price:
+        index === chartData.length - 1 && forecastData.length > 0
+          ? dataPoint.real_price
+          : null,
+    })),
+    [chartData, forecastData.length],
+  );
+
+  const displayData = useMemo(
+    () => (
+      chartData.length
+        ? [...historicalDisplayData, ...futureForecastData]
+        : chartData
+    ),
+    [chartData, historicalDisplayData, futureForecastData],
+  );
+
+  const yAxisDomain = useMemo(() => {
+    const visiblePrices = displayData
+      .flatMap(dataPoint => [
+        dataPoint.real_price,
+        dataPoint.predicted_price,
+      ])
+      .filter(price => price != null);
+
+    if (!visiblePrices.length) return ['auto', 'auto'];
+
+    const minimumVisiblePrice = Math.min(...visiblePrices);
+    const maximumVisiblePrice = Math.max(...visiblePrices);
+    const domainPadding = Math.max(
+      (maximumVisiblePrice - minimumVisiblePrice) * 0.08,
+      Math.abs(maximumVisiblePrice || 1) * 0.0005,
+    );
+
+    return [
+      minimumVisiblePrice - domainPadding,
+      maximumVisiblePrice + domainPadding,
+    ];
   }, [displayData]);
 
   return (
@@ -268,14 +306,14 @@ export default function CoinDetail() {
 
         <div className="header-center">
           <Select
-            value={coin}
-            onChange={(v) => setCoin(v)}
+            value={selectedSymbol}
+            onChange={symbol => setSelectedSymbol(symbol)}
             className="coin-selector"
             popupClassName="coin-selector-dropdown"
             suffixIcon={<SwapOutlined />}
           >
-            {availableCoins.map(s => (
-              <Option key={s} value={s}>{s}</Option>
+            {availableSymbols.map(symbol => (
+              <Option key={symbol} value={symbol}>{symbol}</Option>
             ))}
           </Select>
 
@@ -286,8 +324,11 @@ export default function CoinDetail() {
         </div>
 
         <div className="header-status">
-          <Tag color={liveConnected ? 'green' : 'red'} icon={<ThunderboltOutlined />}>
-            {liveConnected ? 'Live: On' : 'Live: Syncing'}
+          <Tag
+            color={isLiveConnected ? 'green' : 'red'}
+            icon={<ThunderboltOutlined />}
+          >
+            {isLiveConnected ? 'Live: On' : 'Live: Syncing'}
           </Tag>
         </div>
       </header>
@@ -299,17 +340,17 @@ export default function CoinDetail() {
           <span className="stat-value primary">{formatPrice(currentPrice)}</span>
         </div>
         <div className="stat-card">
-          <span className="stat-label">Cao nhất ({TIME_RANGES.find(t => t.value === timeRange)?.label})</span>
-          <span className="stat-value up">{formatPrice(high)}</span>
+          <span className="stat-label">Cao nhất ({TIME_RANGES.find(t => t.value === selectedTimeRange)?.label})</span>
+          <span className="stat-value up">{formatPrice(highestPrice)}</span>
         </div>
         <div className="stat-card">
-          <span className="stat-label">Thấp nhất ({TIME_RANGES.find(t => t.value === timeRange)?.label})</span>
-          <span className="stat-value down">{formatPrice(low)}</span>
+          <span className="stat-label">Thấp nhất ({TIME_RANGES.find(t => t.value === selectedTimeRange)?.label})</span>
+          <span className="stat-value down">{formatPrice(lowestPrice)}</span>
         </div>
         <div className="stat-card">
           <span className="stat-label">Biến động</span>
-          <span className="stat-value" style={{ color: stats.color }}>
-            {stats.icon} {stats.pct >= 0 ? '+' : ''}{stats.pct.toFixed(2)}%
+          <span className="stat-value" style={{ color: priceChange.color }}>
+            {priceChange.icon} {priceChange.pct >= 0 ? '+' : ''}{priceChange.pct.toFixed(2)}%
           </span>
         </div>
         <div className="stat-card">
@@ -323,13 +364,13 @@ export default function CoinDetail() {
         {/* Toolbar */}
         <div className="chart-toolbar">
           <div className="time-range-group">
-            {TIME_RANGES.map(tr => (
+            {TIME_RANGES.map(timeRangeOption => (
               <button
-                key={tr.value}
-                className={`range-btn ${timeRange === tr.value && isLive ? 'active' : ''}`}
-                onClick={() => setTimeRange(tr.value)}
+                key={timeRangeOption.value}
+                className={`range-btn ${selectedTimeRange === timeRangeOption.value && isLive ? 'active' : ''}`}
+                onClick={() => setSelectedTimeRange(timeRangeOption.value)}
               >
-                {tr.label}
+                {timeRangeOption.label}
               </button>
             ))}
           </div>
@@ -343,7 +384,7 @@ export default function CoinDetail() {
 
         {/* Recharts */}
         <div className="chart-wrapper">
-          {loading ? (
+          {isLoading ? (
             <div className="chart-loading">
               <Spin size="large" />
               <Text type="secondary">Đang tải dữ liệu...</Text>
@@ -351,7 +392,7 @@ export default function CoinDetail() {
           ) : displayData.length === 0 ? (
             <div className="chart-loading">
               <InfoCircleOutlined style={{ fontSize: 32, color: '#9ca3af' }} />
-              <Text type="secondary">Không có dữ liệu cho {coin}</Text>
+              <Text type="secondary">Không có dữ liệu cho {selectedSymbol}</Text>
             </div>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
@@ -365,19 +406,19 @@ export default function CoinDetail() {
                   interval="preserveStartEnd"
                 />
                 <YAxis
-                  domain={yDomain}
+                  domain={yAxisDomain}
                   tick={{ fill: '#9ca3af', fontSize: 11 }}
                   tickLine={false}
                   axisLine={false}
-                  tickFormatter={v => formatPrice(v)}
+                  tickFormatter={axisPrice => formatPrice(axisPrice)}
                   width={90}
                 />
                 <Tooltip content={<CustomTooltip />} />
 
                 {/* Đường kẻ dọc "Bây giờ" — bên phải là dự đoán tương lai */}
-                {nowTime && forecast.length > 0 && (
+                {currentTime && forecastData.length > 0 && (
                   <ReferenceLine
-                    x={nowTime}
+                    x={currentTime}
                     stroke="#ffd700"
                     strokeDasharray="4 4"
                     strokeWidth={1.5}
@@ -446,7 +487,7 @@ export default function CoinDetail() {
       {/* ── Footer ── */}
       <footer className="detail-footer">
         <Text type="secondary">
-          {coin} · Dữ liệu từ InfluxDB · Batch Layer cập nhật mỗi 10 phút
+          {selectedSymbol} · Dữ liệu từ InfluxDB · Batch Layer cập nhật mỗi 10 phút
         </Text>
       </footer>
     </div>
