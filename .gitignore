@@ -80,6 +80,7 @@ eventLog/
 *.model
 *.pt
 *.npz
+*.joblib
 models/local_cache/
 spark_scripts/ml/artifacts/
 
